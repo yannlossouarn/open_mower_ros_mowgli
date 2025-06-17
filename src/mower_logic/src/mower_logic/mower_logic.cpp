@@ -228,6 +228,9 @@ bool setMowerEnabled(bool enabled) {
     enabled = false;
   }
 
+  ROS_WARN_STREAM("#### om_mower_logic Yann: setMowerEnabled call");
+
+
   // status change ?
   const auto last_status = status_state_subscriber.getMessage();
   if (last_status.mow_enabled != enabled) {
