@@ -251,7 +251,7 @@ bool setMowerEnabled(bool enabled) {
     enabled = false;
   }
 
-  ROS_INFO_STREAM("successfully set mower enabled to ");
+  ROS_INFO_STREAM("Yann: setMowerEnabled");
 
   // status change ?
   if (last_status.mow_enabled != enabled) {
