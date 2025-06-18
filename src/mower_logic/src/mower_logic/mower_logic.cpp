@@ -511,12 +511,11 @@ void checkSafety(const ros::TimerEvent &timer_event) {
     }
   }
 
-  ROS_INFO_STREAM("om_mower_logic: YL: before setMowerEnabled");
-
+  ROS_INFO_STREAM("YL: before setMowerEnabled, currentBehavior: " << currentBehavior << ", mowerAllowed: " << mowerAllowed << "");
   // enable the mower (if not aleady) if mowerAllowed is still true after checks and bahavior agrees
   setMowerEnabled(currentBehavior != nullptr && mowerAllowed && currentBehavior->mower_enabled());
 
-  ROS_INFO_STREAM("om_mower_logic: YL: after  setMowerEnabled"); 
+  ROS_INFO_STREAM("YL: after  setMowerEnabled, currentBehavior: " << currentBehavior << ", mowerAllowed: " << mowerAllowed << "");
 
   double battery_percent = (last_status.v_battery - last_config.battery_empty_voltage) /
                            (last_config.battery_full_voltage - last_config.battery_empty_voltage);
