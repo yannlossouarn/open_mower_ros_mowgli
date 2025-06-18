@@ -523,6 +523,9 @@ std::string AreaRecordingBehavior::sub_state_name() {
 }
 
 void AreaRecordingBehavior::handle_action(std::string action) {
+
+  ROS_INFO_STREAM("YL AreaRecordingBehavior: handle_action: " << action);
+
   if (action == "mower_logic:area_recording/start_recording") {
     ROS_INFO_STREAM("Got start recording");
     poly_recording_enabled = true;
