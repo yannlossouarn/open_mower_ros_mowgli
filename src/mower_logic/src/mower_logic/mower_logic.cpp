@@ -512,6 +512,7 @@ void checkSafety(const ros::TimerEvent &timer_event) {
   }
 
   ROS_INFO_STREAM("YL: before setMowerEnabled, currentBehavior: " << currentBehavior << ", mowerAllowed: " << mowerAllowed << "");
+  ROS_INFO_STREAM("YL: before setMowerEnabled, consigne: " << currentBehavior != nullptr && mowerAllowed && currentBehavior->mower_enabled());
   // enable the mower (if not aleady) if mowerAllowed is still true after checks and bahavior agrees
   setMowerEnabled(currentBehavior != nullptr && mowerAllowed && currentBehavior->mower_enabled());
 
