@@ -245,7 +245,12 @@ bool setGPS(bool enabled) {
 bool setMowerEnabled(bool enabled) {
   const auto last_config = getConfig();
 
-  ROS_WARN_STREAM("#### om_mower_logic: setMowerEnabled(enabled=" << enabled << ")");
+  if(enabled) {
+    ROS_WARN_STREAM("#### om_mower_logic: setMowerEnabled(enabled=true:" << enabled << ")");
+  }
+  else {
+    ROS_WARN_STREAM("#### om_mower_logic: setMowerEnabled(enabled=false:" << enabled << ")");
+  }
 
   if (!last_config.enable_mower && enabled) {
     // ROS_INFO_STREAM("om_mower_logic: setMowerEnabled() - Mower should be enabled but is hard-disabled in the
