@@ -245,12 +245,6 @@ bool setGPS(bool enabled) {
 bool setMowerEnabled(bool enabled) {
   const auto last_config = getConfig();
 
-  if(enabled) {
-    ROS_WARN_STREAM("#### om_mower_logic: setMowerEnabled(enabled=true:" << enabled << ")");
-  }
-  else {
-    ROS_WARN_STREAM("#### om_mower_logic: setMowerEnabled(enabled=false:" << enabled << ")");
-  }
 
   if (!last_config.enable_mower && enabled) {
     // ROS_INFO_STREAM("om_mower_logic: setMowerEnabled() - Mower should be enabled but is hard-disabled in the
@@ -262,20 +256,18 @@ bool setMowerEnabled(bool enabled) {
 
   // status change ?
   if (last_status.mow_enabled != enabled) {
-    ROS_WARN_STREAM("#### om_mower_logic: setMowerEnabled() : last_status.mow_enabled != enabled :" << last_status.mow_enabled);
+    // ROS_WARN_STREAM("#### om_mower_logic: setMowerEnabled() : last_status.mow_enabled != enabled :" << last_status.mow_enabled);
     ros::Time started = ros::Time::now();
     mower_msgs::MowerControlSrv mow_srv;
     mow_srv.request.mow_enabled = enabled;
     mow_srv.request.mow_direction = started.sec & 0x1;  // Randomize mower direction on second
-    ROS_WARN_STREAM("#### om_mower_logic: setMowerEnabled("
-                    << enabled << ", " << static_cast<unsigned>(mow_srv.request.mow_direction) << ") call");
+    ROS_WARN_STREAM("#### om_mower_logic: setMowerEnabled(" << enabled << ", " << static_cast<unsigned>(mow_srv.request.mow_direction) << ") call");
 
     ros::Rate retry_delay(1);
     bool success = false;
     for (int i = 0; i < 10; i++) {
       if (mowClient.call(mow_srv)) {
-        ROS_INFO_STREAM("successfully set mower enabled to "
-                        << enabled << " (direction " << static_cast<unsigned>(mow_srv.request.mow_direction) << ")");
+        ROS_INFO_STREAM("successfully set mower enabled to " << enabled << " (direction " << static_cast<unsigned>(mow_srv.request.mow_direction) << ")");
         success = true;
         break;
       }
