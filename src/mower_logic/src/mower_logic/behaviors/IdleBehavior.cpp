@@ -144,7 +144,7 @@ bool IdleBehavior::needs_gps() {
   return false;
 }
 
-bool IdleBehavior::mower_enabled() {
+bool IdleBehavior::shall_mow() {
   return false;
 }
 

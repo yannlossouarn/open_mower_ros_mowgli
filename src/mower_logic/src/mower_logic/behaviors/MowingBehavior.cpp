@@ -121,7 +121,7 @@ bool MowingBehavior::needs_gps() {
   return true;
 }
 
-bool MowingBehavior::mower_enabled() {
+bool MowingBehavior::shall_mow() {
   return mowerEnabled;
 }
 

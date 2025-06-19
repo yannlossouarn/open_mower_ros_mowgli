@@ -52,7 +52,7 @@ class IdleBehavior : public Behavior {
 
   bool needs_gps() override;
 
-  bool mower_enabled() override;
+  bool shall_mow() override;
 
   void command_home() override;
 

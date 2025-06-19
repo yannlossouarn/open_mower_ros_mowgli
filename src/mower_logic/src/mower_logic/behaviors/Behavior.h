@@ -135,7 +135,7 @@ class Behavior {
   virtual bool needs_gps() = 0;
 
   // return true, if the mower motor should currently be running.
-  virtual bool mower_enabled() = 0;
+  virtual bool shall_mow() = 0;
 
   // return true to redirect joystick speeds to the controller
   virtual bool redirect_joystick() = 0;

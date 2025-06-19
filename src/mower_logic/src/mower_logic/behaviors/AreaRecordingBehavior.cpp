@@ -152,7 +152,7 @@ void AreaRecordingBehavior::enter() {
   has_outline = false;
   is_mowing_area = false;
   is_navigation_area = false;
-  manual_mowing = false;
+  shall_mow = false;
 
   update_actions();
 
@@ -217,8 +217,8 @@ bool AreaRecordingBehavior::needs_gps() {
   return false;
 }
 
-bool AreaRecordingBehavior::mower_enabled() {
-  return manual_mowing;
+bool AreaRecordingBehavior::shall_mow() {
+  return shall_mow;
 }
 
 void AreaRecordingBehavior::pose_received(const xbot_msgs::AbsolutePose::ConstPtr &msg) {
@@ -583,10 +583,10 @@ void AreaRecordingBehavior::handle_action(std::string action) {
     collect_point = true;
   } else if (action == "mower_logic:area_recording/start_manual_mowing") {
     ROS_INFO_STREAM("Starting manual mowing");
-    manual_mowing = true;
+    shall_mow = true;
   } else if (action == "mower_logic:area_recording/stop_manual_mowing") {
     ROS_INFO_STREAM("Stopping manual mowing");
-    manual_mowing = false;
+    shall_mow = false;
   }
   update_actions();
 }
@@ -642,15 +642,15 @@ AreaRecordingBehavior::AreaRecordingBehavior() {
   collect_point_action.enabled = false;
   collect_point_action.action_name = "Collect point";
 
-  xbot_msgs::ActionInfo start_manual_mowing_action;
-  start_manual_mowing_action.action_id = "start_manual_mowing";
-  start_manual_mowing_action.enabled = false;
-  start_manual_mowing_action.action_name = "Start manual mowing";
+  xbot_msgs::ActionInfo start_shall_mow_action;
+  start_shall_mow_action.action_id = "start_shall_mow";
+  start_shall_mow_action.enabled = false;
+  start_shall_mow_action.action_name = "Start manual mowing";
 
-  xbot_msgs::ActionInfo stop_manual_mowing_action;
-  stop_manual_mowing_action.action_id = "stop_manual_mowing";
-  stop_manual_mowing_action.enabled = false;
-  stop_manual_mowing_action.action_name = "Stop manual mowing";
+  xbot_msgs::ActionInfo stop_shall_mow_action;
+  stop_shall_mow_action.action_id = "stop_shall_mow";
+  stop_shall_mow_action.enabled = false;
+  stop_shall_mow_action.action_name = "Stop manual mowing";
 
   actions.clear();
   actions.push_back(start_recording_action);
@@ -663,8 +663,8 @@ AreaRecordingBehavior::AreaRecordingBehavior() {
   actions.push_back(auto_point_collecting_enable_action);
   actions.push_back(auto_point_collecting_disable_action);
   actions.push_back(collect_point_action);
-  actions.push_back(start_manual_mowing_action);
-  actions.push_back(stop_manual_mowing_action);
+  actions.push_back(start_shall_mow_action);
+  actions.push_back(stop_shall_mow_action);
 }
 
 void AreaRecordingBehavior::update_actions() {
@@ -702,10 +702,10 @@ void AreaRecordingBehavior::update_actions() {
         actions[6].enabled = true;
       }
     }
-    // start_manual_mowing
-    actions[10].enabled = !manual_mowing;
+    // start_shall_mow
+    actions[10].enabled = !shall_mow;
     // stop manual mowing
-    actions[11].enabled = manual_mowing;
+    actions[11].enabled = shall_mow;
 
     registerActions("mower_logic:area_recording", actions);
   }

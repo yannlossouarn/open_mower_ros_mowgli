@@ -339,7 +339,7 @@ bool PerimeterBase::needs_gps() {
   return false;
 }
 
-bool PerimeterBase::mower_enabled() {
+bool PerimeterBase::shall_mow() {
   // No mower during docking
   return false;
 }

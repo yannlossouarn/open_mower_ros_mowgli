@@ -409,12 +409,13 @@ void checkSafety(const ros::TimerEvent &timer_event) {
   const auto pose_time = getPoseTime();
   const auto status_time = getStatusTime();
   const auto last_good_gps = getLastGoodGPS();
+  const auto red_flag = false;
 
   high_level_status.emergency = last_status.emergency;
   high_level_status.is_charging = last_status.v_charge > 10.0;
 
   // Initialize to true, if after all checks it is still true then mower should be enabled.
-  mowerAllowed = true;
+  // mowerAllowed = true;
 
   // send to idle if emergency and we're not recording
   if (currentBehavior != nullptr) {
@@ -439,6 +440,7 @@ void checkSafety(const ros::TimerEvent &timer_event) {
   if (ros::Time::now() - pose_time > ros::Duration(1.0)) {
     stopBlade();
     stopMoving();
+    red_flag = true;
     ROS_WARN_STREAM_THROTTLE(
         5, "om_mower_logic: EMERGENCY pose values stopped. dt was: " << (ros::Time::now() - pose_time));
     return;
@@ -493,6 +495,7 @@ void checkSafety(const ros::TimerEvent &timer_event) {
     if (gpsTimeout) {
       stopBlade();
       stopMoving();
+      red_flag = true;
       return;
     }
   }
@@ -503,13 +506,17 @@ void checkSafety(const ros::TimerEvent &timer_event) {
     }
   }
 
+
+  mowerAllowed = !red_flag;
+
+
   // ROS_INFO_STREAM_THROTTLE(3, "YL: before setMowerEnabled, currentBehavior: " << (currentBehavior) << "");
   // ROS_INFO_STREAM_THROTTLE(3, "YL: before setMowerEnabled, currentBehavior != nullptr: " << (currentBehavior != nullptr) << "");
   ROS_INFO_STREAM_THROTTLE(3, "YL: before setMowerEnabled, mowerAllowed: " << (mowerAllowed) << "");
   ROS_INFO_STREAM( "YL: before setMowerEnabled, currentBehavior->mower_enabled(): " << (currentBehavior->mower_enabled()) << "");
   // ROS_INFO_STREAM_THROTTLE(1, "YL: before setMowerEnabled, consigne: " << (currentBehavior != nullptr && mowerAllowed && currentBehavior->mower_enabled()) << "");
   // enable the mower (if not aleady) if mowerAllowed is still true after checks and bahavior agrees
-  setMowerEnabled(currentBehavior != nullptr && mowerAllowed && currentBehavior->mower_enabled());
+  setMowerEnabled(currentBehavior != nullptr && mowerAllowed && currentBehavior->shall_mow());
 
   // ROS_INFO_STREAM_THROTTLE(3, "YL: after  setMowerEnabled, currentBehavior: " << currentBehavior << ", mowerAllowed: " << mowerAllowed << "");
 

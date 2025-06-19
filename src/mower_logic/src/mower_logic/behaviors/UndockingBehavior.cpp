@@ -154,7 +154,7 @@ bool UndockingBehavior::needs_gps() {
   return gpsRequired;
 }
 
-bool UndockingBehavior::mower_enabled() {
+bool UndockingBehavior::shall_mow() {
   // No mower during docking
   return false;
 }

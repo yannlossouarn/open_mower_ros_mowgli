@@ -255,7 +255,7 @@ bool DockingBehavior::needs_gps() {
   return inApproachMode;
 }
 
-bool DockingBehavior::mower_enabled() {
+bool DockingBehavior::shall_mow() {
   // No mower during docking
   return false;
 }
