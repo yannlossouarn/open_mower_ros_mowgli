@@ -93,6 +93,7 @@ double max_v_battery_seen = 0.0;
 
 ros::Time last_rain_check;
 bool rain_detected = true;
+bool red_flag = false; 
 ros::Time rain_resume;
 
 /**
@@ -409,7 +410,8 @@ void checkSafety(const ros::TimerEvent &timer_event) {
   const auto pose_time = getPoseTime();
   const auto status_time = getStatusTime();
   const auto last_good_gps = getLastGoodGPS();
-  const auto red_flag = false;
+
+  red_flag = false;
 
   high_level_status.emergency = last_status.emergency;
   high_level_status.is_charging = last_status.v_charge > 10.0;
