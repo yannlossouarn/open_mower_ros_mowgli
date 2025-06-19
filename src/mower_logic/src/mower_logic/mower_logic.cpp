@@ -93,7 +93,7 @@ double max_v_battery_seen = 0.0;
 
 ros::Time last_rain_check;
 bool rain_detected = true;
-bool red_flag = false; 
+bool red_flag = false;
 ros::Time rain_resume;
 
 /**
