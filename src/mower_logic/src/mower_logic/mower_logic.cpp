@@ -514,8 +514,8 @@ void checkSafety(const ros::TimerEvent &timer_event) {
 
   // ROS_INFO_STREAM_THROTTLE(3, "YL: before setMowerEnabled, currentBehavior: " << (currentBehavior) << "");
   // ROS_INFO_STREAM_THROTTLE(3, "YL: before setMowerEnabled, currentBehavior != nullptr: " << (currentBehavior != nullptr) << "");
-  ROS_INFO_STREAM_THROTTLE(3, "YL: before setMowerEnabled, mowerAllowed: " << (mowerAllowed) << "");
-  ROS_INFO_STREAM( "YL: before setMowerEnabled, currentBehavior->shall_mow(): " << (currentBehavior->shall_mow()) << "");
+  // ROS_INFO_STREAM_THROTTLE(3, "YL: before setMowerEnabled, mowerAllowed: " << (mowerAllowed) << "");
+  // ROS_INFO_STREAM( "YL: before setMowerEnabled, currentBehavior->shall_mow(): " << (currentBehavior->shall_mow()) << "");
   // ROS_INFO_STREAM_THROTTLE(1, "YL: before setMowerEnabled, consigne: " << (currentBehavior != nullptr && mowerAllowed && currentBehavior->shall_mow()) << "");
   // enable the mower (if not aleady) if mowerAllowed is still true after checks and bahavior agrees
   setMowerEnabled(currentBehavior != nullptr && mowerAllowed && currentBehavior->shall_mow());
@@ -649,6 +649,9 @@ bool highLevelCommand(mower_msgs::HighLevelControlSrvRequest &req, mower_msgs::H
 }
 
 void actionReceived(const std_msgs::String::ConstPtr &action) {
+
+  ROS_INFO_STREAM("om_mower_logic: actionReceived: " << action->data);
+
   if (action->data == "mower_logic/reset_emergency") {
     ROS_WARN_STREAM("Got reset emergency action.");
     setEmergencyMode(false);

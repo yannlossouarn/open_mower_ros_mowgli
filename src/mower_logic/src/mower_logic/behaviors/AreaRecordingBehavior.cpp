@@ -219,8 +219,9 @@ bool AreaRecordingBehavior::needs_gps() {
 }
 
 bool AreaRecordingBehavior::shall_mow() {
-  ROS_INFO_STREAM("AreaRecordingBehavior::shall_mow(" << shall_be_mowing << ")");
-  return shall_be_mowing;
+  ROS_INFO_STREAM("AreaRecordingBehavior::shall_mow(always true)");
+  // return shall_be_mowing;
+  return true;
 }
 
 void AreaRecordingBehavior::pose_received(const xbot_msgs::AbsolutePose::ConstPtr &msg) {
