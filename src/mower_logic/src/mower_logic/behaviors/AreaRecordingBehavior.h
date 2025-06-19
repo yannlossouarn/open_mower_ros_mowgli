@@ -89,7 +89,7 @@ class AreaRecordingBehavior : public Behavior {
   bool auto_point_collecting = true;
   bool collect_point = false;
 
-  bool shall_mow = false;
+  bool shall_be_mowing = false;
 
   visualization_msgs::MarkerArray markers;
   visualization_msgs::Marker marker;
@@ -123,7 +123,7 @@ class AreaRecordingBehavior : public Behavior {
 
   bool needs_gps() override;
 
-  bool shall_mow() override;
+  bool mower_enabled() override;
 
   void command_home() override;
 
