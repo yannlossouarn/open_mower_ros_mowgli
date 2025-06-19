@@ -509,7 +509,7 @@ void checkSafety(const ros::TimerEvent &timer_event) {
   ROS_INFO_STREAM( "YL: before setMowerEnabled, currentBehavior->mower_enabled(): " << (currentBehavior->mower_enabled()) << "");
   // ROS_INFO_STREAM_THROTTLE(1, "YL: before setMowerEnabled, consigne: " << (currentBehavior != nullptr && mowerAllowed && currentBehavior->mower_enabled()) << "");
   // enable the mower (if not aleady) if mowerAllowed is still true after checks and bahavior agrees
-  setMowerEnabled(currentBehavior != nullptr && mowerAllowed && "AREA_RECORDING" == currentBehavior->state_name() && !currentBehavior->mower_enabled());
+  setMowerEnabled(currentBehavior != nullptr && mowerAllowed && currentBehavior->mower_enabled());
 
   // ROS_INFO_STREAM_THROTTLE(3, "YL: after  setMowerEnabled, currentBehavior: " << currentBehavior << ", mowerAllowed: " << mowerAllowed << "");
 
