@@ -28,7 +28,9 @@ COPY --link ./ /opt/open_mower_ros
 
 WORKDIR /opt/open_mower_ros
 
-RUN git submodule update --init --recursive
+
+# YL : remove this line to point to my fork for testing
+# RUN git submodule update --init --recursive
 
 
 # Get slic3r_coverage_planner and build that. We will pull the finished install folder from this.
