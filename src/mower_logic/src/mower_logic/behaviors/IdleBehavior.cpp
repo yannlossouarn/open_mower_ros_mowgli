@@ -58,7 +58,7 @@ Behavior *IdleBehavior::execute() {
     return &AreaRecordingBehavior::INSTANCE;
   }
 
-  setGPS(false);
+  // setGPS(false); // YL : we don't want to disable GPS here, as we might be in the docking station and want to use GPS for undocking
   geometry_msgs::PoseStamped docking_pose_stamped;
   docking_pose_stamped.pose = get_docking_point_srv.response.docking_pose;
   docking_pose_stamped.header.frame_id = "map";
