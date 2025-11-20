@@ -70,7 +70,11 @@ Behavior *IdleBehavior::execute() {
     stopBlade();
     const auto last_config = getConfig();
     const auto last_status = getStatus();
-
+    // If a home/dock was requested externally, start docking.
+    if (go_home_requested) {
+      go_home_requested = false;
+      return &DockingBehavior::INSTANCE;
+    }
     const bool automatic_mode = last_config.automatic_mode == eAutoMode::AUTO;
     const bool active_semiautomatic_task = last_config.automatic_mode == eAutoMode::SEMIAUTO &&
                                            shared_state->active_semiautomatic_task &&
@@ -118,6 +122,7 @@ Behavior *IdleBehavior::execute() {
 
 void IdleBehavior::enter() {
   start_area_recorder = false;
+  go_home_requested = false;
   // Reset the docking behavior, to allow docking
   DockingBehavior::INSTANCE.reset();
 
@@ -149,7 +154,12 @@ bool IdleBehavior::shall_mow() {
 }
 
 void IdleBehavior::command_home() {
-  // IdleBehavior == docked, don't do anything.
+  // If this instance represents the docked idle behavior, ignore home command.
+  if (stay_docked) return;
+
+  // Request docking and abort the current idle loop so the state machine can transition.
+  go_home_requested = true;
+  abort();
 }
 
 void IdleBehavior::command_start() {
