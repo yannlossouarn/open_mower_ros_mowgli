@@ -17,6 +17,12 @@
 //
 #include "IdleBehavior.h"
 
+#include <cryptopp/cryptlib.h>
+#include <cryptopp/hex.h>
+#include <cryptopp/sha.h>
+
+#include "mower_map/GetMowingAreaSrv.h"
+
 #include "PerimeterDocking.h"
 
 extern void stopMoving();
@@ -184,6 +190,98 @@ uint8_t IdleBehavior::get_sub_state() {
 }
 uint8_t IdleBehavior::get_state() {
   return mower_msgs::HighLevelStatus::HIGH_LEVEL_STATE_IDLE;
+}
+
+bool IdleBehavior::create_mowing_plan(int area_index) {
+  ROS_INFO_STREAM("IdleBehavior: Creating mowing plan for area: " << area_index);
+  // Delete old plan and progress.
+  currentMowingPaths.clear();
+
+  // get the mowing area
+  mower_map::GetMowingAreaSrv mapSrv;
+  mapSrv.request.index = area_index;
+  if (!mapClient.call(mapSrv)) {
+    ROS_ERROR_STREAM("IdleBehavior: Error loading mowing area");
+    return false;
+  }
+
+  // Area orientation is the same as the first point
+  double angle = 0;
+  auto points = mapSrv.response.area.area.points;
+  if (points.size() >= 2) {
+    tf2::Vector3 first(points[0].x, points[0].y, 0);
+    for (auto point : points) {
+      tf2::Vector3 second(point.x, point.y, 0);
+      auto diff = second - first;
+      if (diff.length() > 2.0) {
+        // we have found a point that has a distance of > 1 m, calculate the angle
+        angle = atan2(diff.y(), diff.x());
+        ROS_INFO_STREAM("IdleBehavior: Detected mow angle: " << angle);
+        break;
+      }
+    }
+  }
+
+  // add mowing angle offset increment and return into the <-180, 180> range
+  double mow_angle_offset = std::fmod(getConfig().mow_angle_offset + currentMowingAngleIncrementSum + 180, 360);
+  if (mow_angle_offset < 0) mow_angle_offset += 360;
+  mow_angle_offset -= 180;
+  ROS_INFO_STREAM("IdleBehavior: mowing angle offset (deg): " << mow_angle_offset);
+  if (config.mow_angle_offset_is_absolute) {
+    angle = mow_angle_offset * (M_PI / 180.0);
+    ROS_INFO_STREAM("IdleBehavior: Custom mowing angle: " << angle);
+  } else {
+    angle = angle + mow_angle_offset * (M_PI / 180.0);
+    ROS_INFO_STREAM("IdleBehavior: Auto-detected mowing angle + mowing angle offset: " << angle);
+  }
+
+  // calculate coverage
+  slic3r_coverage_planner::PlanPath pathSrv;
+  pathSrv.request.angle = angle;
+  pathSrv.request.outline_count = config.outline_count;
+  pathSrv.request.outline_overlap_count = config.outline_overlap_count;
+  pathSrv.request.outline = mapSrv.response.area.area;
+  pathSrv.request.holes = mapSrv.response.area.obstacles;
+  pathSrv.request.fill_type = slic3r_coverage_planner::PlanPathRequest::FILL_LINEAR;
+  pathSrv.request.outer_offset = config.outline_offset;
+  pathSrv.request.distance = config.tool_width;
+  if (!pathClient.call(pathSrv)) {
+    ROS_ERROR_STREAM("IdleBehavior: Error during coverage planning");
+    return false;
+  }
+
+  currentMowingPaths = pathSrv.response.paths;
+
+  // Calculate mowing plan digest from the poses
+  // TODO: move to slic3r_coverage_planner
+  CryptoPP::SHA256 hash;
+  byte digest[CryptoPP::SHA256::DIGESTSIZE];
+  for (const auto &path : currentMowingPaths) {
+    for (const auto &pose_stamped : path.path.poses) {
+      hash.Update(reinterpret_cast<const byte *>(&pose_stamped.pose), sizeof(geometry_msgs::Pose));
+    }
+  }
+  hash.Final((byte *)&digest[0]);
+  CryptoPP::HexEncoder encoder;
+  std::string mowingPlanDigest = "";
+  encoder.Attach(new CryptoPP::StringSink(mowingPlanDigest));
+  encoder.Put(digest, sizeof(digest));
+  encoder.MessageEnd();
+
+  // Proceed to checkpoint?
+  if (mowingPlanDigest == currentMowingPlanDigest) {
+    ROS_INFO_STREAM("IdleBehavior: Advancing to checkpoint, path: " << currentMowingPath
+                                                                      << " index: " << currentMowingPathIndex);
+  } else {
+    ROS_INFO_STREAM("IdleBehavior: Ignoring checkpoint for plan ("
+                    << currentMowingPlanDigest << ") current mowing plan is (" << mowingPlanDigest << ")");
+    // Plan has changed so must restart the area
+    currentMowingPlanDigest = mowingPlanDigest;
+    currentMowingPath = 0;
+    currentMowingPathIndex = 0;
+  }
+
+  return true;
 }
 
 IdleBehavior::IdleBehavior(bool stayDocked) {
