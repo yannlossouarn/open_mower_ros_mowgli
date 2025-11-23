@@ -43,7 +43,7 @@ class IdleBehavior : public Behavior {
   int currentMowingPathIndex;
   std::string currentMowingPlanDigest;
   double currentMowingAngleIncrementSum;
-  
+
  public:
   IdleBehavior(bool stayDocked);
 
