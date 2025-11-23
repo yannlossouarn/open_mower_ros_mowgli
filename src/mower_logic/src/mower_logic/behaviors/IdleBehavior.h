@@ -38,7 +38,12 @@ class IdleBehavior : public Behavior {
 
   std::vector<slic3r_coverage_planner::Path> currentMowingPaths;
   std::string currentMowingPlanDigest;
-
+  int currentMowingPath;
+  int currentMowingArea;
+  int currentMowingPathIndex;
+  std::string currentMowingPlanDigest;
+  double currentMowingAngleIncrementSum;
+  
  public:
   IdleBehavior(bool stayDocked);
 
