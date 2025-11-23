@@ -37,6 +37,7 @@ class IdleBehavior : public Behavior {
   bool create_mowing_plan(int area_index);
 
   std::vector<slic3r_coverage_planner::Path> currentMowingPaths;
+  std::string currentMowingPlanDigest;
 
  public:
   IdleBehavior(bool stayDocked);
