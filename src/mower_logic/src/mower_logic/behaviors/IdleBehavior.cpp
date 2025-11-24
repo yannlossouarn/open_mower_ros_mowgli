@@ -39,6 +39,7 @@ extern mower_logic::MowerLogicConfig getConfig();
 extern dynamic_reconfigure::Server<mower_logic::MowerLogicConfig> *reconfigServer;
 
 extern ros::ServiceClient mapClient;
+extern ros::ServiceClient pathClient;
 extern ros::ServiceClient dockingPointClient;
 
 IdleBehavior IdleBehavior::INSTANCE(false);
