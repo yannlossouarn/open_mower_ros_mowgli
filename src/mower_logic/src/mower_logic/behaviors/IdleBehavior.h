@@ -25,6 +25,8 @@
 #include "Behavior.h"
 #include "UndockingBehavior.h"
 #include "mower_map/GetMowingAreaSrv.h"
+#include "slic3r_coverage_planner/Path.h"
+#include "slic3r_coverage_planner/PlanPath.h"
 #include "xbot_msgs/ActionInfo.h"
 
 class IdleBehavior : public Behavior {
