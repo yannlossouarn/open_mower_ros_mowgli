@@ -41,7 +41,7 @@ class IdleBehavior : public Behavior {
   int currentMowingPath;
   int currentMowingArea;
   int currentMowingPathIndex;
-  std::string currentMowingPlanDigest;
+
   double currentMowingAngleIncrementSum;
 
  public:
