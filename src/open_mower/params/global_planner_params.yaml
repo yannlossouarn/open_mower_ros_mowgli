@@ -1,2 +1,8 @@
 GlobalPlanner:
   orientation_mode: 1
+  use_dijkstra: true
+  use_quadratic: true
+  use_grid_path: false
+  allow_unknown: false
+  lethal_cost: 253
+  neutral_cost: 10
