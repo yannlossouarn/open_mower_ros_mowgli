@@ -288,7 +288,7 @@ void buildMap() {
   ROS_INFO_STREAM("Map Position: x=" << origin.x() << ", y=" << origin.y());
   ROS_INFO_STREAM("Map Size: x=" << (maxX - minX) << ", y=" << (maxY - minY));
 
-  map.setGeometry(grid_map::Length(maxX - minX, maxY - minY), 0.05, origin);
+  map.setGeometry(grid_map::Length(maxX - minX, maxY - minY), 0.01, origin);
   map.setTimestamp(ros::Time::now().toNSec());
 
   map.clearAll();
