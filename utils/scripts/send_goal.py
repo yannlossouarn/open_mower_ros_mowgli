@@ -23,7 +23,7 @@ from nav_msgs.msg import Path
 import tf2_ros
 import tf2_geometry_msgs
 import tf
-
+import subprocess
 
 def make_pose_stamped(x, y, yaw, frame_id="map"):
     p = PoseStamped()
@@ -77,16 +77,24 @@ def try_get_path_action(action_name):
 def main():
     parser = argparse.ArgumentParser(description="Request a planner-only path from the mower planner (MBF/FTCPlanner).")
     parser.add_argument("--start", nargs=3, type=float, metavar=("X","Y","YAW"), help="Start pose x y yaw (radians)")
-    parser.add_argument("--start-current", action="store_true", help="Use the current robot pose as start (TF lookup)")
-    parser.add_argument("--goal", nargs=3, required=True, type=float, metavar=("X","Y","YAW"), help="Goal pose x y yaw (radians)")
+    parser.add_argument("--start-current", default=True, action="store_true", help="Use the current robot pose as start (TF lookup)")
+    parser.add_argument("--goal", default=[-2, 13, 1.57], nargs=3, type=float, metavar=("X","Y","YAW"), help="Goal pose x y yaw (radians)")
     parser.add_argument("--map-frame", default="map", help="Map frame to use (default: map)")
     parser.add_argument("--base-frame", default="base_link", help="Robot base frame for current pose lookup (default: base_link)")
     parser.add_argument("--action", default="/move_base_flex/get_path", help="GetPath action server name (default: /move_base_flex/get_path)")
-    parser.add_argument("--controller", default="FTCPlanner", help="Planner/controller name to request (default: FTCPlanner)")
+    parser.add_argument("--controller", default="GlobalPlanner", help="Planner/controller name to request (default: FTCPlanner)")
     parser.add_argument("--planner", default=None, help="MBF planner plugin name to request (e.g. GlobalPlanner)")
     parser.add_argument("--tolerance", default=0.0, type=float, help="Tolerance to pass to GetPath goal (default: 0.0)")
     parser.add_argument("--out", help="Optional output file to save path as a simple list of poses")
     args = parser.parse_args()
+
+    yaml_path = "/opt/open_mower_ros/src/open_mower/params/global_planner_params.yaml"
+    try:
+        subprocess.check_call(["rosparam", "load", yaml_path])
+        rospy.loginfo(f"Reloaded parameters from {yaml_path}")
+    except Exception as e:
+        rospy.logwarn(f"Failed to reload parameters: {e}")
+
 
     rospy.init_node("planner_trace_path", anonymous=True)
 
