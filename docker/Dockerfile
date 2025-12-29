@@ -80,6 +80,7 @@ COPY --link --from=slic3r /opt/prebuilt/slic3r_coverage_planner /opt/prebuilt/sl
 COPY --link --from=dependencies /apt-install_list /apt-install_list
 RUN apt-get update && \
     apt-get install --no-install-recommends --yes $(cat /apt-install_list) && \
+    apt-get install nano python3-pip python3-rospy && \
     rm -rf /var/lib/apt/lists/*
 
 # This will already have the submodules initialized, no need to clone again
