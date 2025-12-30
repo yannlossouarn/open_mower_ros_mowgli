@@ -5,4 +5,7 @@ GlobalPlanner:
   use_grid_path: false
   allow_unknown: false
   lethal_cost: 253
-  neutral_cost: 10
+  neutral_cost: 3
+  cost_factor: 90
+  publish_potential: false
+  visualize_potential: false
