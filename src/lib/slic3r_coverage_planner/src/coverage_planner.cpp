@@ -554,6 +554,11 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
         }
         hole_poly.make_clockwise();
 
+        // Only add holes that actually intersect this mowing area outline.
+        // Foreign obstacles (from other areas) must be skipped, otherwise
+        // slic3r generates paths inside them. (upstream fix #259)
+        if (intersection(outline_poly, hole_poly).empty()) continue;
+
         expoly.holes.push_back(hole_poly);
     }
 
