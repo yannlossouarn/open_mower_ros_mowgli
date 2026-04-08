@@ -28,6 +28,7 @@
 #include "mower_msgs/Status.h"
 #include "ros/ros.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.h"
+#include "xbot_msgs/AbsolutePose.h"
 #include "xbot_msgs/ActionInfo.h"
 
 class DockingBehavior : public Behavior {

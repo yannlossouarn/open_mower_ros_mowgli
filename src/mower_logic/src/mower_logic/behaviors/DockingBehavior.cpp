@@ -23,6 +23,7 @@ extern actionlib::SimpleActionClient<mbf_msgs::MoveBaseAction>* mbfClient;
 extern actionlib::SimpleActionClient<mbf_msgs::ExePathAction>* mbfClientExePath;
 extern mower_msgs::Status getStatus();
 extern mower_msgs::Power getPower();
+extern xbot_msgs::AbsolutePose getPose();
 
 extern void stopMoving();
 extern bool setGPS(bool enabled);
@@ -51,17 +52,32 @@ bool DockingBehavior::approach_docking_point() {
   double roll, pitch, yaw;
   m.getRPY(roll, pitch, yaw);
 
+  {
+    auto robot_pose = getPose();
+    ROS_INFO_STREAM("#### DockingBehavior: dock pose x=" << docking_pose_stamped.pose.position.x
+                                                         << " y=" << docking_pose_stamped.pose.position.y
+                                                         << " yaw=" << yaw * 180.0 / M_PI << "deg");
+    ROS_INFO_STREAM("#### DockingBehavior: robot pose x=" << robot_pose.pose.pose.position.x
+                                                          << " y=" << robot_pose.pose.pose.position.y
+                                                          << " pos_accuracy=" << robot_pose.position_accuracy);
+  }
+
   // Get the approach start point
   {
     geometry_msgs::PoseStamped docking_approach_point = docking_pose_stamped;
     docking_approach_point.pose.position.x -= cos(yaw) * config.docking_approach_distance;
     docking_approach_point.pose.position.y -= sin(yaw) * config.docking_approach_distance;
+    ROS_INFO_STREAM("#### DockingBehavior: approach target x=" << docking_approach_point.pose.position.x << " y="
+                                                               << docking_approach_point.pose.position.y << " ("
+                                                               << config.docking_approach_distance << "m before dock)");
     mbf_msgs::MoveBaseGoal moveBaseGoal;
     moveBaseGoal.target_pose = docking_approach_point;
     moveBaseGoal.controller = "FTCPlanner";
 
     auto result = sendGoalAndWaitUnlessAborted(mbfClient, moveBaseGoal);
     if (aborted || result.state_ != result.SUCCEEDED) {
+      ROS_WARN_STREAM("#### DockingBehavior: approach MoveBase failed, state=" << result.state_.toString()
+                                                                               << " aborted=" << aborted);
       return false;
     }
   }
