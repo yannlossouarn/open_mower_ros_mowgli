@@ -77,7 +77,8 @@ bool DockingBehavior::approach_docking_point() {
 
     auto result = sendGoalAndWaitUnlessAborted(mbfClient, moveBaseGoal);
     if (aborted || result.state_ != result.SUCCEEDED) {
-      ROS_WARN_STREAM("#### DockingBehavior: approach MoveBase failed, state=" << result.state_.toString()
+      actionlib::SimpleClientGoalState st(result.state_);
+      ROS_WARN_STREAM("#### DockingBehavior: approach MoveBase failed, state=" << st.toString()
                                                                                << " aborted=" << aborted);
       return false;
     }
