@@ -3,18 +3,20 @@
     I.e. the raw data comms to the Low Level Board, the GPS, etc.
 -->
 <launch>
+    <arg name="respawn_nodes" default="true"/>
+
     <!-- TODO: Add parameter for simulation -->
     <!-- v1 if HARDWARE_PLATFORM == 1 -->
     <group if="$(eval env('HARDWARE_PLATFORM') == '1')">
         <!-- Comms v1 -->
         <node pkg="mower_comms_v1" type="mower_comms_v1" name="ll" unless="$(optenv OM_NO_COMMS False)"
-                output="screen" respawn="true" respawn_delay="10">
+                output="screen" respawn="$(arg respawn_nodes)" respawn_delay="10">
         </node>
         <!-- GPS driver only for v1 builds -->
         <node pkg="xbot_driver_gps" type="driver_gps_node" name="gps"
                 ns="ll/services"
                 output="screen"
-                respawn="true"
+                respawn="$(arg respawn_nodes)"
                 respawn_delay="5"
                 unless="$(optenv OM_NO_GPS False)">
             <remap from="/ll/services/rtcm" to="/ll/position/gps/rtcm"/>
@@ -29,13 +31,15 @@
     <group if="$(eval env('HARDWARE_PLATFORM') == '2')">
         <group unless="$(optenv OM_NO_COMMS False)">
             <!-- Use V2 Comms -->
-            <node pkg="mower_comms_v2" type="mower_comms_v2" name="mower_comms_v2" output="screen" respawn="true" respawn_delay="10">
+            <node pkg="mower_comms_v2" type="mower_comms_v2" name="mower_comms_v2" output="screen" respawn="$(arg respawn_nodes)" respawn_delay="10">
             </node>
         </group>
     </group>
     <group unless="$(optenv OM_NO_GPS False)">
     <!-- NTRIP for both: v1 and v2 -->
-        <include if="$(optenv OM_USE_NTRIP True)" file="$(find open_mower)/launch/include/_ntrip_client.launch"/>
+        <include if="$(optenv OM_USE_NTRIP True)" file="$(find open_mower)/launch/include/_ntrip_client.launch">
+            <arg name="respawn_nodes" value="$(arg respawn_nodes)"/>
+        </include>
     </group>
 
 </launch>

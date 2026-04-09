@@ -1,43 +1,54 @@
 <launch>
+    <!-- If OM_DEVELOPMENT_PREVENT_NODE_RESPAWN=true, all nodes are launched with respawn=false -->
+    <arg name="respawn_nodes" default="$(eval optenv('OM_DEVELOPMENT_PREVENT_NODE_RESPAWN', 'false') != 'true')"/>
+
     <include file="$(find open_mower)/launch/include/_params.launch"/>
-    <include file="$(find open_mower)/launch/include/_comms.launch"/>
+    <include file="$(find open_mower)/launch/include/_comms.launch">
+        <arg name="respawn_nodes" value="$(arg respawn_nodes)"/>
+    </include>
 
     <!-- Sipeed A010 ToF sensor: enabled when OM_TOF_DEVICE env var is set -->
     <include if="$(eval optenv('OM_TOF_DEVICE', 'UNSET') != 'UNSET')"
              file="$(find sipeed_tof_ms_a010)/launch/sipeed_tof_ms_a010.launch"/>
 
-    <include file="$(find open_mower)/launch/include/_move_base.launch"/>
-    <include file="$(find open_mower)/launch/include/_localization.launch"/>
-    <include file="$(find open_mower)/launch/include/_teleop.launch"/>
+    <include file="$(find open_mower)/launch/include/_move_base.launch">
+        <arg name="respawn_nodes" value="$(arg respawn_nodes)"/>
+    </include>
+    <include file="$(find open_mower)/launch/include/_localization.launch">
+        <arg name="respawn_nodes" value="$(arg respawn_nodes)"/>
+    </include>
+    <include file="$(find open_mower)/launch/include/_teleop.launch">
+        <arg name="respawn_nodes" value="$(arg respawn_nodes)"/>
+    </include>
     <include file="$(find open_mower)/launch/include/_record.launch">
         <arg name="prefix" value="mow_area"/>
     </include>
 
 
-    <node pkg="mower_map" type="mower_map_service" name="map_service" output="screen" respawn="true" respawn_delay="10"/>
-    <node pkg="mower_logic" type="mower_logic" name="mower_logic" output="screen" respawn="true" respawn_delay="10">
+    <node pkg="mower_map" type="mower_map_service" name="map_service" output="screen" respawn="$(arg respawn_nodes)" respawn_delay="10"/>
+    <node pkg="mower_logic" type="mower_logic" name="mower_logic" output="screen" respawn="$(arg respawn_nodes)" respawn_delay="10">
     </node>
-    <node pkg="slic3r_coverage_planner" type="slic3r_coverage_planner" name="slic3r_coverage_planner" output="screen" respawn="true" respawn_delay="10"/>
+    <node pkg="slic3r_coverage_planner" type="slic3r_coverage_planner" name="slic3r_coverage_planner" output="screen" respawn="$(arg respawn_nodes)" respawn_delay="10"/>
 
-    <node pkg="twist_mux" type="twist_mux" name="twist_mux" output="screen" respawn="true" respawn_delay="10">
+    <node pkg="twist_mux" type="twist_mux" name="twist_mux" output="screen" respawn="$(arg respawn_nodes)" respawn_delay="10">
         <remap from="cmd_vel_out" to="/ll/cmd_vel"/>
 
         <rosparam file="$(find open_mower)/params/twist_mux_topics.yaml" command="load"/>
     </node>
 
-    <node pkg="xbot_monitoring" type="xbot_monitoring" name="xbot_monitoring" output="screen" respawn="true"
+    <node pkg="xbot_monitoring" type="xbot_monitoring" name="xbot_monitoring" output="screen" respawn="$(arg respawn_nodes)"
           respawn_delay="10">
         <remap from="/xbot_monitoring/remote_cmd_vel" to="/joy_vel"/>
     </node>
 
-    <node pkg="xbot_monitoring" type="heatmap_generator" name="heatmap_generator" output="screen" respawn="true"
+    <node pkg="xbot_monitoring" type="heatmap_generator" name="heatmap_generator" output="screen" respawn="$(arg respawn_nodes)"
           respawn_delay="10" unless="$(eval optenv('OM_HEATMAP_SENSOR_IDS', 'UNSET') == 'UNSET')">
         <param name="sensor_ids" value="$(optenv OM_HEATMAP_SENSOR_IDS)"/>
     </node>
 
-    <node pkg="xbot_remote" type="xbot_remote" name="xbot_remote" output="screen" respawn="true" respawn_delay="10">
+    <node pkg="xbot_remote" type="xbot_remote" name="xbot_remote" output="screen" respawn="$(arg respawn_nodes)" respawn_delay="10">
         <remap from="/xbot_remote/cmd_vel" to="/joy_vel"/>
     </node>
 
-    <node pkg="mower_logic" type="monitoring" name="monitoring" output="screen" respawn="true" respawn_delay="10"/>
+    <node pkg="mower_logic" type="monitoring" name="monitoring" output="screen" respawn="$(arg respawn_nodes)" respawn_delay="10"/>
 </launch>

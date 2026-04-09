@@ -11,6 +11,7 @@
     <arg name="ca_cert" default=""/>
     <arg name="debug" default="false"/>
     <arg name="rtcm_message_package" default="rtcm_msgs"/>
+    <arg name="respawn_nodes" default="true"/>
 
     <!-- Set the log level to debug -->
     <env name="NTRIP_CLIENT_DEBUG" value="$(arg debug)"/>
@@ -19,7 +20,7 @@
     <!-- NTRIP Client Node -->
     <!-- ****************************************************************** -->
     <node name="ntrip_client" pkg="ntrip_client" type="ntrip_ros.py" output="screen"
-          respawn="true" respawn_delay="10">
+          respawn="$(arg respawn_nodes)" respawn_delay="10">
 
         <!-- Optional parameter that will set the NTRIP version in the initial HTTP request to the NTRIP caster. -->
         <param name="ntrip_version" value="$(arg ntrip_version)"/>
