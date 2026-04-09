@@ -44,6 +44,7 @@ DockingBehavior::DockingBehavior() {
 
 bool DockingBehavior::approach_docking_point() {
   ROS_INFO_STREAM("Calculating approach path");
+  ROS_INFO_STREAM("Additional traces");
 
   // Calculate a docking approaching point behind the actual docking point
   tf2::Quaternion quat;
