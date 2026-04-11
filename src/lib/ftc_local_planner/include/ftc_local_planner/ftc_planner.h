@@ -22,6 +22,10 @@
 #include "tf2_eigen/tf2_eigen.h"
 #include <mbf_costmap_core/costmap_controller.h>
 #include <visualization_msgs/Marker.h>
+#include <sensor_msgs/Imu.h>
+#include <geometry_msgs/TwistStamped.h>
+#include <xbot_msgs/AbsolutePose.h>
+#include <atomic>
 
 namespace ftc_local_planner
 {
@@ -59,6 +63,25 @@ namespace ftc_local_planner
         ros::Publisher obstacle_marker_pub;
 
         FTCPlannerConfig config;
+
+        // --- Shock detection (log-only) ---
+        ros::Subscriber imu_sub_;
+        std::atomic<bool> shock_flag_{false};
+        ros::Time shock_flag_time_;
+
+        // --- Wheel slip detection (log-only) ---
+        ros::Subscriber measured_twist_sub_;
+        ros::Subscriber xb_pose_sub_;
+        xbot_msgs::AbsolutePose last_xb_pose_;
+        ros::Time slip_window_start_;
+        double slip_wheel_distance_acc_{0.0};
+        double slip_gps_distance_acc_{0.0};
+        geometry_msgs::Point slip_last_position_;
+        bool slip_window_active_{false};
+
+        void onImu(const sensor_msgs::Imu::ConstPtr& msg);
+        void onMeasuredTwist(const geometry_msgs::TwistStamped::ConstPtr& msg);
+        void onXbPose(const xbot_msgs::AbsolutePose::ConstPtr& msg);
 
         Eigen::Affine3d current_control_point;
 
