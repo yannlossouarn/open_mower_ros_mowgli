@@ -76,7 +76,6 @@ xbot_msgs::AbsolutePose xb_absolute_pose_msg;
 bool gps_enabled = true;
 int gps_outlier_count = 0;
 int valid_gps_samples = 0;
-int gps_message_throttle = 1;
 
 ros::Time last_gps_time(0.0);
 
@@ -422,7 +421,6 @@ int main(int argc, char **argv) {
     paramNh.param("debug", publish_debug, false);
     paramNh.param("antenna_offset_x", antenna_offset_x, 0.0);
     paramNh.param("antenna_offset_y", antenna_offset_y, 0.0);
-    paramNh.param("gps_message_throttle", gps_message_throttle, 1);
 
     core.setAntennaOffset(antenna_offset_x, antenna_offset_y);
 

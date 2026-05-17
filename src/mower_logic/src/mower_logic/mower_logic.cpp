@@ -49,6 +49,7 @@
 #include "ros/ros.h"
 #include "slic3r_coverage_planner/PlanPath.h"
 #include "std_msgs/String.h"
+#include "utils.h"
 #include "xbot_msgs/AbsolutePose.h"
 #include "xbot_msgs/RegisterActionsSrv.h"
 #include "xbot_positioning/GPSControlSrv.h"
@@ -392,7 +393,7 @@ void checkSafety(const ros::TimerEvent& timer_event) {
   const auto last_good_gps = getLastGoodGPS();
 
   high_level_status.emergency = last_emergency.latched_emergency;
-  high_level_status.is_charging = last_power.v_charge > 10.0;
+  high_level_status.is_charging = last_power.charge_voltage_chg > 10.0 || last_power.charge_voltage_adc > 10.0;
 
   // Initialize to true, if after all checks it is still true then mower should be enabled.
   mowerAllowed = true;
@@ -403,7 +404,7 @@ void checkSafety(const ros::TimerEvent& timer_event) {
       currentBehavior->requestPause(pauseType::PAUSE_EMERGENCY);
       if (currentBehavior == &AreaRecordingBehavior::INSTANCE || currentBehavior == &IdleBehavior::INSTANCE ||
           currentBehavior == &IdleBehavior::DOCKED_INSTANCE) {
-        if (last_power.v_charge > 10.0) {
+        if (high_level_status.is_charging) {
           // emergency and docked and idle or area recording, so it's safe to reset the emergency mode, reset it. It's
           // safe since we won't start moving in this mode.
           setEmergencyMode(false);
@@ -449,7 +450,9 @@ void checkSafety(const ros::TimerEvent& timer_event) {
     setLastGoodGPS(ros::Time::now());
     high_level_status.gps_quality_percent =
         1.0 - fmin(1.0, last_pose.position_accuracy / last_config.max_position_accuracy);
-    ROS_INFO_STREAM_THROTTLE(10, "GPS quality: " << high_level_status.gps_quality_percent);
+    if (currentBehavior->needs_gps()) {
+      ROS_INFO_STREAM_THROTTLE(10, "GPS quality: " << high_level_status.gps_quality_percent);
+    }
   } else {
     // GPS = bad, set quality to 0
     high_level_status.gps_quality_percent = 0;
@@ -457,7 +460,9 @@ void checkSafety(const ros::TimerEvent& timer_event) {
       // set this if we don't even have an orientation
       high_level_status.gps_quality_percent = -1;
     }
-    ROS_WARN_STREAM_THROTTLE(1, "Low quality GPS");
+    if (currentBehavior->needs_gps()) {
+      ROS_WARN_STREAM_THROTTLE(1, "Low quality GPS");
+    }
   }
 
   bool gpsTimeout = ros::Time::now() - last_good_gps > ros::Duration(last_config.gps_timeout);
@@ -465,7 +470,9 @@ void checkSafety(const ros::TimerEvent& timer_event) {
   if (gpsTimeout) {
     // GPS = bad, set quality to 0
     high_level_status.gps_quality_percent = 0;
-    ROS_WARN_STREAM_THROTTLE(1, "GPS timeout");
+    if (currentBehavior->needs_gps()) {
+      ROS_WARN_STREAM_THROTTLE(1, "GPS timeout");
+    }
   }
 
   if (currentBehavior != nullptr && currentBehavior->needs_gps()) {
@@ -487,13 +494,14 @@ void checkSafety(const ros::TimerEvent& timer_event) {
   // enable the mower (if not aleady) if mowerAllowed is still true after checks and bahavior agrees
   setMowerEnabled(currentBehavior != nullptr && mowerAllowed && currentBehavior->mower_enabled());
 
-  double battery_percent = (last_power.v_battery - last_power_config.battery_empty_voltage) /
+  // Get the best available battery voltage using fallback chain: ADC -> BMS -> CHG
+  const float last_battery_v = utils::GetFirstValid(
+      {last_power.battery_voltage_adc, last_power.battery_voltage_bms, last_power.battery_voltage_chg});
+
+  double battery_percent = (last_battery_v - last_power_config.battery_empty_voltage) /
                            (last_power_config.battery_full_voltage - last_power_config.battery_empty_voltage);
-  if (battery_percent > 1.0) {
-    battery_percent = 1.0;
-  } else if (battery_percent < 0.0) {
-    battery_percent = 0.0;
-  }
+  battery_percent = std::max(battery_percent, 0.0);  // Clamp from below to 0.0
+  battery_percent = std::min(battery_percent, 1.0);  // Clamp from above to 1.0
   high_level_status.battery_percent = battery_percent;
 
   // we are in non emergency, check if we should pause. This could be empty battery, rain or hot mower motor etc.
@@ -507,13 +515,13 @@ void checkSafety(const ros::TimerEvent& timer_event) {
   }
 
   // Dock if below critical voltage to avoid BMS undervoltage protection
-  if (!dockingNeeded && (last_power.v_battery < last_power_config.battery_critical_voltage)) {
-    dockingReason << "Battery voltage min critical: " << last_power.v_battery;
+  if (!dockingNeeded && (last_battery_v < last_power_config.battery_critical_voltage)) {
+    dockingReason << "Battery voltage min critical: " << last_battery_v;
     dockingNeeded = true;
   }
 
   // Otherwise take the max battery voltage over 20s to ignore droop during short current spikes
-  max_v_battery_seen = std::max<double>(max_v_battery_seen, last_power.v_battery);
+  max_v_battery_seen = std::max<double>(max_v_battery_seen, last_battery_v);
   if (ros::Time::now() - last_v_battery_check > ros::Duration(20.0)) {
     if (!dockingNeeded && (max_v_battery_seen < last_power_config.battery_empty_voltage)) {
       dockingReason << "Battery average voltage low: " << max_v_battery_seen;

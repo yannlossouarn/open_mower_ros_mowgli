@@ -21,6 +21,8 @@
 #include <rosbag/bag.h>
 #include <rosbag/view.h>
 
+#include <cmath>
+
 #include "mower_logic/CheckPoint.h"
 #include "mower_map/ClearNavPointSrv.h"
 #include "mower_map/GetMowingAreaSrv.h"
@@ -159,40 +161,29 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
     return false;
   }
 
-  if (mapSrv.response.area.area.points.empty()) {
+  if (!mapSrv.response.area.active) {
     ROS_INFO_STREAM("MowingBehavior: Skipping inactive mowing area");
     return true;
   }
 
-  // ---- DIAGNOSTIC: confirm what the map service returned ----
-  ROS_INFO_STREAM("MowingBehavior: create_mowing_plan area_index="
-                  << area_index << " -> got " << mapSrv.response.area.area.points.size() << " boundary points"
-                  << " and " << mapSrv.response.area.obstacles.size() << " obstacle hole(s)");
-  if (!mapSrv.response.area.area.points.empty()) {
-    const auto& fp = mapSrv.response.area.area.points[0];
-    ROS_INFO_STREAM("MowingBehavior: Area first boundary point: (" << fp.x << ", " << fp.y << ")");
-  }
-  for (size_t hi = 0; hi < mapSrv.response.area.obstacles.size(); hi++) {
-    const auto& hole = mapSrv.response.area.obstacles[hi];
-    if (!hole.points.empty())
-      ROS_INFO_STREAM("MowingBehavior: Hole[" << hi << "] first point: (" << hole.points[0].x << ", "
-                                              << hole.points[0].y << "), pts=" << hole.points.size());
-  }
-  // ---- END DIAGNOSTIC ----
-
-  // Area orientation is the same as the first point
+  // Area orientation is the same as the first point, unless explicitly specified in the area attributes
   double angle = 0;
-  auto points = mapSrv.response.area.area.points;
-  if (points.size() >= 2) {
-    tf2::Vector3 first(points[0].x, points[0].y, 0);
-    for (auto point : points) {
-      tf2::Vector3 second(point.x, point.y, 0);
-      auto diff = second - first;
-      if (diff.length() > 2.0) {
-        // we have found a point that has a distance of > 1 m, calculate the angle
-        angle = atan2(diff.y(), diff.x());
-        ROS_INFO_STREAM("MowingBehavior: Detected mow angle: " << angle);
-        break;
+  if (!std::isnan(mapSrv.response.area.angle)) {
+    angle = mapSrv.response.area.angle;
+    ROS_INFO_STREAM("MowingBehavior: Using explicitly specified mow angle: " << angle);
+  } else {
+    auto points = mapSrv.response.area.area.points;
+    if (points.size() >= 2) {
+      tf2::Vector3 first(points[0].x, points[0].y, 0);
+      for (auto point : points) {
+        tf2::Vector3 second(point.x, point.y, 0);
+        auto diff = second - first;
+        if (diff.length() > 2.0) {
+          // we have found a point that has a distance of > 2 m, calculate the angle
+          angle = atan2(diff.y(), diff.x());
+          ROS_INFO_STREAM("MowingBehavior: Detected mow angle: " << angle);
+          break;
+        }
       }
     }
   }
@@ -211,14 +202,20 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
   }
 
   // calculate coverage
+  const auto& area = mapSrv.response.area;
+  auto overrideOrGlobal = [](auto override, auto global, auto sentinel) {
+    return (override != sentinel) ? override : global;
+  };
+
   slic3r_coverage_planner::PlanPath pathSrv;
   pathSrv.request.angle = angle;
-  pathSrv.request.outline_count = config.outline_count;
-  pathSrv.request.outline_overlap_count = config.outline_overlap_count;
-  pathSrv.request.outline = mapSrv.response.area.area;
-  pathSrv.request.holes = mapSrv.response.area.obstacles;
+  pathSrv.request.outline_count = overrideOrGlobal(area.outline_count, config.outline_count, -1);
+  pathSrv.request.outline_overlap_count =
+      overrideOrGlobal(area.outline_overlap_count, config.outline_overlap_count, -1);
+  pathSrv.request.outline = area.area;
+  pathSrv.request.holes = area.obstacles;
   pathSrv.request.fill_type = slic3r_coverage_planner::PlanPathRequest::FILL_LINEAR;
-  pathSrv.request.outer_offset = config.outline_offset;
+  pathSrv.request.outer_offset = std::isnan(area.outline_offset) ? config.outline_offset : area.outline_offset;
   pathSrv.request.distance = config.tool_width;
   if (!pathClient.call(pathSrv)) {
     ROS_ERROR_STREAM("MowingBehavior: Error during coverage planning");
