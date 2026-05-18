@@ -77,8 +77,7 @@ Behavior* IdleBehavior::execute() {
   // position without waiting for GPS RTK convergence or for the user to press START.
   {
     const auto init_power = getPower();
-    const float init_charge_v =
-        utils::GetFirstValid({init_power.charge_voltage_adc, init_power.charge_voltage_chg});
+    const float init_charge_v = utils::GetFirstValid({init_power.charge_voltage_adc, init_power.charge_voltage_chg});
     if (init_charge_v > 5.0) {
       ROS_INFO_STREAM("Docked at startup: initializing robot pose to dock position.");
       setRobotPose(docking_pose_stamped.pose);
