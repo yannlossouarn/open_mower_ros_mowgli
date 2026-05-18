@@ -549,6 +549,8 @@ bool MowingBehavior::execute_mowing_plan() {
             (path.path.poses.size() - currentMowingPathIndex) < 5)  // fully mowed the path ?
         {
           ROS_INFO_STREAM("MowingBehavior: (MOW) Mow path finished, skipping to next mow path.");
+          consecutive_obstacle_skips_ = 0;
+          last_skipped_mowing_path_ = -1;
           currentMowingPath++;
           currentMowingPathIndex = 0;
           // continue with next segment
@@ -559,12 +561,31 @@ bool MowingBehavior::execute_mowing_plan() {
           // currentMowingPathIndex might be 0 if we never consumed one of the points, we advance at least 1 point
           if (currentMowingPathIndex == 0) currentMowingPathIndex++;
           if (!requested_pause_flag) {
+            // Track consecutive skips within this segment; reset counter when segment changes
+            if (last_skipped_mowing_path_ != currentMowingPath) {
+              consecutive_obstacle_skips_ = 0;
+              last_skipped_mowing_path_ = currentMowingPath;
+            }
+            consecutive_obstacle_skips_++;
+
             const int skip = std::max(1, (int)getConfig().obstacle_skip_count);
             currentMowingPathIndex = std::min((int)path.path.poses.size(), currentMowingPathIndex + skip);
-            ROS_INFO_STREAM("MowingBehavior: (MOW) Obstacle skip: advancing path index to "
-                            << currentMowingPathIndex << " (+" << skip << ") of " << path.path.poses.size());
-            // If skipping consumed the rest of the path, advance to next segment
-            if (currentMowingPathIndex >= (int)path.path.poses.size()) {
+            ROS_INFO_STREAM("MowingBehavior: (MOW) Obstacle skip "
+                            << consecutive_obstacle_skips_ << ": advancing path index to " << currentMowingPathIndex
+                            << " (+" << skip << ") of " << path.path.poses.size());
+
+            // After too many consecutive skips in the same segment, abandon it entirely
+            const int max_skips = getConfig().max_obstacle_skips_per_segment;
+            if (max_skips > 0 && consecutive_obstacle_skips_ >= max_skips) {
+              ROS_WARN_STREAM("MowingBehavior: (MOW) " << consecutive_obstacle_skips_
+                                                       << " consecutive obstacle skips in segment " << currentMowingPath
+                                                       << " — abandoning segment (max=" << max_skips << ").");
+              consecutive_obstacle_skips_ = 0;
+              last_skipped_mowing_path_ = -1;
+              currentMowingPath++;
+              currentMowingPathIndex = 0;
+            } else if (currentMowingPathIndex >= (int)path.path.poses.size()) {
+              // Skip exhausted the segment normally
               ROS_INFO_STREAM("MowingBehavior: (MOW) Skip exhausted path segment, moving to next.");
               currentMowingPath++;
               currentMowingPathIndex = 0;

@@ -79,6 +79,12 @@ namespace ftc_local_planner
         geometry_msgs::Point slip_last_position_;
         bool slip_window_active_{false};
 
+        // --- Position stall detection ---
+        bool stall_window_active_{false};
+        ros::Time stall_window_start_;
+        double stall_gps_acc_{0.0};
+        geometry_msgs::Point stall_last_position_;
+
         void onImu(const sensor_msgs::Imu::ConstPtr& msg);
         void onMeasuredTwist(const geometry_msgs::TwistStamped::ConstPtr& msg);
         void onXbPose(const xbot_msgs::AbsolutePose::ConstPtr& msg);

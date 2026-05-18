@@ -61,6 +61,7 @@ namespace ftc_local_planner
 
         shock_flag_.store(false);
         slip_window_active_ = false;
+        stall_window_active_ = false;
 
         ROS_INFO("FTCLocalPlannerROS: Version 2 Init.");
     }
@@ -79,7 +80,9 @@ namespace ftc_local_planner
             << " speed_factor=" << c.shock_speed_factor << " min_speed=" << c.shock_min_speed << "m/s"
             << " | slip=" << (c.slip_detection_enabled ? "ENABLED" : "disabled")
             << " wheel_min=" << c.slip_min_wheel_distance << "m ratio_thr=" << c.slip_ratio_threshold
-            << " window=" << c.slip_detection_window << "s");
+            << " window=" << c.slip_detection_window << "s"
+            << " | stall=" << (c.stall_detection_enabled ? "ENABLED" : "disabled")
+            << " advance_min=" << c.stall_min_advance << "m window=" << c.stall_detection_window << "s");
 
         // just to be sure
         current_movement_speed = config.speed_slow;
@@ -100,6 +103,9 @@ namespace ftc_local_planner
 
         last_time = ros::Time::now();
         current_movement_speed = config.speed_slow;
+
+        slip_window_active_ = false;
+        stall_window_active_ = false;
 
         lat_error = 0.0;
         lon_error = 0.0;
@@ -185,41 +191,67 @@ namespace ftc_local_planner
     }
 
     // -----------------------------------------------------------------------
-    // GPS position accumulator for slip detection
+    // GPS position accumulator — feeds both slip and stall detectors
     // -----------------------------------------------------------------------
     void FTCPlanner::onXbPose(const xbot_msgs::AbsolutePose::ConstPtr& msg)
     {
-        if (!config.slip_detection_enabled) return;
-
-        const geometry_msgs::Point& pos = msg->pose.pose.position;
         last_xb_pose_ = *msg;
+        const geometry_msgs::Point& pos = msg->pose.pose.position;
+        const bool active = (current_state == FOLLOWING && current_movement_speed >= config.shock_min_speed);
 
-        if (current_state != FOLLOWING || current_movement_speed < config.shock_min_speed)
+        // --- Slip accumulator ---
+        if (config.slip_detection_enabled)
         {
-            slip_window_active_ = false;
-            return;
+            if (!active)
+            {
+                slip_window_active_ = false;
+            }
+            else if (!slip_window_active_)
+            {
+                slip_window_active_ = true;
+                slip_window_start_ = ros::Time::now();
+                slip_wheel_distance_acc_ = 0.0;
+                slip_gps_distance_acc_ = 0.0;
+                slip_last_position_ = pos;
+            }
+            else
+            {
+                const double dx = pos.x - slip_last_position_.x;
+                const double dy = pos.y - slip_last_position_.y;
+                slip_gps_distance_acc_ += std::sqrt(dx * dx + dy * dy);
+                slip_last_position_ = pos;
+                ROS_INFO_STREAM_THROTTLE(5.0, "FTCPlanner slip window: elapsed="
+                    << (ros::Time::now() - slip_window_start_).toSec() << "s"
+                    << " wheel=" << slip_wheel_distance_acc_ << "m gps=" << slip_gps_distance_acc_ << "m"
+                    << " ratio="
+                    << (slip_wheel_distance_acc_ > 0.0 ? slip_gps_distance_acc_ / slip_wheel_distance_acc_ : -1.0)
+                    << " gps_acc=" << msg->position_accuracy << "m");
+            }
         }
 
-        if (!slip_window_active_)
+        // --- Stall accumulator ---
+        if (config.stall_detection_enabled)
         {
-            slip_window_active_ = true;
-            slip_window_start_ = ros::Time::now();
-            slip_wheel_distance_acc_ = 0.0;
-            slip_gps_distance_acc_ = 0.0;
-            slip_last_position_ = pos;
-            return;
+            const bool stall_active = (current_state == FOLLOWING && current_movement_speed >= config.stall_min_speed);
+            if (!stall_active)
+            {
+                stall_window_active_ = false;
+            }
+            else if (!stall_window_active_)
+            {
+                stall_window_active_ = true;
+                stall_window_start_ = ros::Time::now();
+                stall_gps_acc_ = 0.0;
+                stall_last_position_ = pos;
+            }
+            else
+            {
+                const double dx = pos.x - stall_last_position_.x;
+                const double dy = pos.y - stall_last_position_.y;
+                stall_gps_acc_ += std::sqrt(dx * dx + dy * dy);
+                stall_last_position_ = pos;
+            }
         }
-
-        const double dx = pos.x - slip_last_position_.x;
-        const double dy = pos.y - slip_last_position_.y;
-        slip_gps_distance_acc_ += std::sqrt(dx * dx + dy * dy);
-        slip_last_position_ = pos;
-        ROS_INFO_STREAM_THROTTLE(5.0, "FTCPlanner slip window: elapsed="
-            << (ros::Time::now() - slip_window_start_).toSec() << "s"
-            << " wheel=" << slip_wheel_distance_acc_ << "m"
-            << " gps=" << slip_gps_distance_acc_ << "m"
-            << " ratio=" << (slip_wheel_distance_acc_ > 0.0 ? slip_gps_distance_acc_ / slip_wheel_distance_acc_ : -1.0)
-            << " gps_acc=" << msg->position_accuracy << "m");
     }
 
     // -----------------------------------------------------------------------
@@ -324,6 +356,7 @@ namespace ftc_local_planner
         {
             shock_flag_.store(false);
             slip_window_active_ = false;
+            stall_window_active_ = false;
             cmd_vel.twist.linear.x = 0;
             cmd_vel.twist.angular.z = 0;
             is_crashed = true;
@@ -348,6 +381,7 @@ namespace ftc_local_planner
                         ROS_WARN_STREAM("FTCPlanner: Slip detected! wheel=" << slip_wheel_distance_acc_
                             << "m gps=" << slip_gps_distance_acc_ << "m ratio=" << ratio);
                         slip_window_active_ = false;
+                        stall_window_active_ = false;
                         cmd_vel.twist.linear.x = 0;
                         cmd_vel.twist.angular.z = 0;
                         is_crashed = true;
@@ -364,6 +398,34 @@ namespace ftc_local_planner
                 slip_window_start_ = ros::Time::now();
                 slip_wheel_distance_acc_ = 0.0;
                 slip_gps_distance_acc_ = 0.0;
+            }
+        }
+
+        // Check position stall: GPS advance too small over the window despite commanded motion
+        if (config.stall_detection_enabled && stall_window_active_)
+        {
+            const double elapsed = (ros::Time::now() - stall_window_start_).toSec();
+            if (elapsed >= config.stall_detection_window)
+            {
+                if (stall_gps_acc_ < config.stall_min_advance)
+                {
+                    ROS_WARN_STREAM("FTCPlanner: Stall detected! GPS advance=" << stall_gps_acc_ << "m in " << elapsed
+                                                                               << "s (min=" << config.stall_min_advance
+                                                                               << "m) — requesting recovery");
+                    stall_window_active_ = false;
+                    slip_window_active_ = false;
+                    cmd_vel.twist.linear.x = 0;
+                    cmd_vel.twist.angular.z = 0;
+                    is_crashed = true;
+                    markObstacleAtCurrentPose();
+                    return RET_BLOCKED;
+                }
+                ROS_INFO_STREAM_THROTTLE(10.0, "FTCPlanner stall window OK: GPS advance=" << stall_gps_acc_ << "m in "
+                                                                                          << elapsed << "s (min="
+                                                                                          << config.stall_min_advance
+                                                                                          << "m)");
+                stall_window_start_ = ros::Time::now();
+                stall_gps_acc_ = 0.0;
             }
         }
 
