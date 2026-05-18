@@ -73,6 +73,18 @@ Behavior* IdleBehavior::execute() {
   docking_pose_stamped.header.frame_id = "map";
   docking_pose_stamped.header.stamp = ros::Time::now();
 
+  // YL: if docked at entry (charging), initialize pose to dock immediately so the map shows the correct
+  // position without waiting for GPS RTK convergence or for the user to press START.
+  {
+    const auto init_power = getPower();
+    const float init_charge_v =
+        utils::GetFirstValid({init_power.charge_voltage_adc, init_power.charge_voltage_chg});
+    if (init_charge_v > 5.0) {
+      ROS_INFO_STREAM("Docked at startup: initializing robot pose to dock position.");
+      setRobotPose(docking_pose_stamped.pose);
+    }
+  }
+
   ros::Rate r(25);
   while (ros::ok()) {
     stopMoving();
