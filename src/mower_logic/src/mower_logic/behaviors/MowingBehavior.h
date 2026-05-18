@@ -44,6 +44,10 @@ class MowingBehavior : public Behavior {
   std::string currentMowingPlanDigest;
   double currentMowingAngleIncrementSum;
 
+  // Consecutive obstacle skip tracking — reset whenever currentMowingPath advances
+  int consecutive_obstacle_skips_{0};
+  int last_skipped_mowing_path_{-1};
+
  public:
   MowingBehavior();
 
