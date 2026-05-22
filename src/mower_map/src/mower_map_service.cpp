@@ -475,6 +475,11 @@ void buildMap() {
     if (!area.active) continue;
 
     if (area.type == "mow" || area.type == "nav") {
+      if (area.outline.size() < 3) {
+        ROS_WARN_STREAM("buildMap: skipping area id=" << area.id << " type=" << area.type << " — polygon has only "
+                                                      << area.outline.size() << " vertices");
+        continue;
+      }
       grid_map::Polygon poly = internalPolygonToGridMap(area.outline);
       for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
         const grid_map::Index index(*iterator);
@@ -487,6 +492,11 @@ void buildMap() {
     if (!area.active) continue;
 
     if (area.type == "obstacle") {
+      if (area.outline.size() < 3) {
+        ROS_WARN_STREAM("buildMap: skipping obstacle id=" << area.id << " — polygon has only " << area.outline.size()
+                                                          << " vertices");
+        continue;
+      }
       grid_map::Polygon poly = internalPolygonToGridMap(area.outline);
       for (grid_map::PolygonIterator iterator(map, poly); !iterator.isPastEnd(); ++iterator) {
         const grid_map::Index index(*iterator);
