@@ -623,6 +623,40 @@ bool addMowingArea(mower_map::AddMowingAreaSrvRequest& req, mower_map::AddMowing
   return true;
 }
 
+static bool pointInPolygon(const Point& p, const Polygon& poly) {
+  bool inside = false;
+  size_t n = poly.size();
+  for (size_t i = 0, j = n - 1; i < n; j = i++) {
+    const Point& pi = poly[i];
+    const Point& pj = poly[j];
+    if (((pi.y > p.y) != (pj.y > p.y)) && (p.x < (pj.x - pi.x) * (p.y - pi.y) / (pj.y - pi.y) + pi.x)) inside = !inside;
+  }
+  return inside;
+}
+
+static bool segmentsIntersect(const Point& a, const Point& b, const Point& c, const Point& d) {
+  double d1x = b.x - a.x, d1y = b.y - a.y;
+  double d2x = d.x - c.x, d2y = d.y - c.y;
+  double denom = d1x * d2y - d1y * d2x;
+  if (std::abs(denom) < 1e-12) return false;
+  double t = ((c.x - a.x) * d2y - (c.y - a.y) * d2x) / denom;
+  double u = ((c.x - a.x) * d1y - (c.y - a.y) * d1x) / denom;
+  return t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0;
+}
+
+static bool polygonsIntersect(const Polygon& a, const Polygon& b) {
+  if (a.size() < 3 || b.size() < 3) return false;
+  for (const auto& p : a)
+    if (pointInPolygon(p, b)) return true;
+  for (const auto& p : b)
+    if (pointInPolygon(p, a)) return true;
+  size_t na = a.size(), nb = b.size();
+  for (size_t i = 0, j = na - 1; i < na; j = i++)
+    for (size_t k = 0, l = nb - 1; k < nb; l = k++)
+      if (segmentsIntersect(a[j], a[i], b[l], b[k])) return true;
+  return false;
+}
+
 bool getMowingArea(mower_map::GetMowingAreaSrvRequest& req, mower_map::GetMowingAreaSrvResponse& res) {
   ROS_INFO_STREAM("Got getMowingArea call with index: " << req.index);
 
@@ -650,6 +684,10 @@ bool getMowingArea(mower_map::GetMowingAreaSrvRequest& req, mower_map::GetMowing
   int obstacle_count = 0;
   for (const auto& area : map_data.areas) {
     if (!area.active || area.type != "obstacle") continue;
+    if (!polygonsIntersect(chosen.outline, area.outline)) {
+      ROS_DEBUG_STREAM("getMowingArea: skipping obstacle id=" << area.id << " — does not intersect mowing area");
+      continue;
+    }
     res.area.obstacles.push_back(internalPolygonToGeometry(area.outline));
     obstacle_count++;
   }
