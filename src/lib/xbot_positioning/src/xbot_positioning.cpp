@@ -68,6 +68,7 @@ bool publish_debug;
 
 // Antenna offset (offset between point of rotation and antenna)
 double antenna_offset_x, antenna_offset_y;
+double imu_yaw_deadband = 0.0;
 
 nav_msgs::Odometry odometry;
 xbot_positioning::KalmanState state_msg;
@@ -144,9 +145,9 @@ void onImu(const sensor_msgs::Imu::ConstPtr &msg) {
     double dt = (msg->header.stamp - last_imu.header.stamp).toSec();
     double yaw_rate = msg->angular_velocity.z - gyro_offset;
 
-    // Suppress micro-rates that are likely IMU bias drift when the robot is stationary
-    const double deadband = 0.01;  // rad/s ~ 0.6 deg/s
-    if (std::fabs(yaw_rate) < deadband) {
+    // Suppress micro-rates that are likely IMU bias drift when the robot is stationary.
+    // Configurable via ~imu_yaw_deadband (rad/s). Set to 0.0 to disable.
+    if (imu_yaw_deadband > 0.0 && std::fabs(yaw_rate) < imu_yaw_deadband) {
         yaw_rate = 0.0;
     }
 
@@ -421,6 +422,7 @@ int main(int argc, char **argv) {
     paramNh.param("debug", publish_debug, false);
     paramNh.param("antenna_offset_x", antenna_offset_x, 0.0);
     paramNh.param("antenna_offset_y", antenna_offset_y, 0.0);
+    paramNh.param("imu_yaw_deadband", imu_yaw_deadband, 0.0);
 
     core.setAntennaOffset(antenna_offset_x, antenna_offset_y);
 
