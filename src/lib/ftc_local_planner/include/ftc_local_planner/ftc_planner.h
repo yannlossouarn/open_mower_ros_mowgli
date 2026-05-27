@@ -85,6 +85,25 @@ namespace ftc_local_planner
         double stall_gps_acc_{0.0};
         geometry_msgs::Point stall_last_position_;
 
+        // --- Obstacle-aware rotation direction (Phase 3) ---
+        // +1 = prefer CCW, -1 = prefer CW, 0 = no preference (use natural/shorter direction)
+        int preferred_pre_rotate_sign_{0};
+        int preferred_post_rotate_sign_{0};
+
+        /**
+         * @brief Evaluate the maximum costmap cost when the robot footprint is placed at
+         *        (cx, cy) rotated by `angle` radians.  Returns costmap_2d::LETHAL_OBSTACLE
+         *        if any footprint corner falls outside the map.
+         */
+        double sweepFootprintCost(double cx, double cy, double angle);
+
+        /**
+         * @brief Compare the obstacle cost of rotating CCW vs CW from robot_yaw to target_yaw.
+         *        Returns +1 (prefer CCW), -1 (prefer CW), or 0 (no meaningful difference /
+         *        feature disabled).
+         */
+        int selectRotationDirection(double robot_yaw, double target_yaw);
+
         void onImu(const sensor_msgs::Imu::ConstPtr& msg);
         void onMeasuredTwist(const geometry_msgs::TwistStamped::ConstPtr& msg);
         void onXbPose(const xbot_msgs::AbsolutePose::ConstPtr& msg);

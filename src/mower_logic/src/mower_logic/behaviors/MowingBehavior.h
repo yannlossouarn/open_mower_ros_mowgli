@@ -48,6 +48,10 @@ class MowingBehavior : public Behavior {
   int consecutive_obstacle_skips_{0};
   int last_skipped_mowing_path_{-1};
 
+  // Phase 3 retreat recovery: remember which path index we already retreated for so we only
+  // attempt one retreat per path (before falling through to the trim logic).
+  int retreat_mowing_path_{-1};
+
  public:
   MowingBehavior();
 

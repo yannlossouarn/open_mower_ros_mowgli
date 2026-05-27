@@ -798,6 +798,8 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
         }
     }
 
+    // Collect fill-line paths into a local vector so we can reorder them.
+    std::vector<slic3r_coverage_planner::Path> fill_paths;
     for (int i = 0; i < fill_lines.size(); i++) {
         auto &line = fill_lines[i];
         slic3r_coverage_planner::Path path;
@@ -805,7 +807,6 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
         path.path.header = header;
 
         line.remove_duplicate_points();
-
 
         auto equally_spaced_points = line.equally_spaced_points(scale_(0.1));
         if (equally_spaced_points.size() < 2) {
@@ -822,7 +823,6 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
             }
 
             // calculate pose for "lastPoint" pointing to current point
-
             auto dir = pt - *lastPoint;
             double orientation = atan2(dir.y, dir.x);
             tf2::Quaternion q(0.0, 0.0, orientation);
@@ -846,7 +846,74 @@ bool planPath(slic3r_coverage_planner::PlanPathRequest &req, slic3r_coverage_pla
         pose.pose.position.z = 0;
         path.path.poses.push_back(pose);
 
-        res.paths.push_back(path);
+        fill_paths.push_back(path);
+    }
+
+    // Nearest-neighbour ordering with optional per-path reversal.
+    //
+    // Starting point: the endpoint of the last outline/obstacle path already in res.paths
+    // (or the first fill path's front if no outlines were generated).
+    // For each unvisited fill path we try both ends and pick the one closer to prev_endpoint.
+    // When the back end is closer we reverse the path and flip every pose orientation by pi so
+    // the robot travels in the right direction and arrives at the start with the correct heading.
+    {
+        double prev_x = 0.0, prev_y = 0.0;
+        if (!res.paths.empty() && !res.paths.back().path.poses.empty()) {
+            prev_x = res.paths.back().path.poses.back().pose.position.x;
+            prev_y = res.paths.back().path.poses.back().pose.position.y;
+        } else if (!fill_paths.empty() && !fill_paths.front().path.poses.empty()) {
+            prev_x = fill_paths.front().path.poses.front().pose.position.x;
+            prev_y = fill_paths.front().path.poses.front().pose.position.y;
+        }
+
+        std::vector<bool> visited(fill_paths.size(), false);
+        for (size_t i = 0; i < fill_paths.size(); ++i) {
+            double best_dist = std::numeric_limits<double>::infinity();
+            int    best_idx  = -1;
+            bool   best_rev  = false;
+
+            for (size_t j = 0; j < fill_paths.size(); ++j) {
+                if (visited[j]) continue;
+                const auto &poses = fill_paths[j].path.poses;
+                if (poses.empty()) continue;
+
+                double dx_f = poses.front().pose.position.x - prev_x;
+                double dy_f = poses.front().pose.position.y - prev_y;
+                double dist_f = std::sqrt(dx_f * dx_f + dy_f * dy_f);
+
+                double dx_b = poses.back().pose.position.x - prev_x;
+                double dy_b = poses.back().pose.position.y - prev_y;
+                double dist_b = std::sqrt(dx_b * dx_b + dy_b * dy_b);
+
+                if (dist_f < best_dist) { best_dist = dist_f; best_idx = (int)j; best_rev = false; }
+                if (dist_b < best_dist) { best_dist = dist_b; best_idx = (int)j; best_rev = true;  }
+            }
+
+            if (best_idx < 0) break;
+            visited[best_idx] = true;
+
+            auto &chosen = fill_paths[best_idx];
+            if (best_rev) {
+                std::reverse(chosen.path.poses.begin(), chosen.path.poses.end());
+                // Flip every orientation by pi so the heading matches the reversed travel direction.
+                // The btQuaternion 3-arg ctor is (yaw_Y, pitch_X, roll_Z) where roll_Z is the 2D yaw.
+                for (auto &ps : chosen.path.poses) {
+                    tf2::Quaternion q(ps.pose.orientation.x, ps.pose.orientation.y,
+                                      ps.pose.orientation.z, ps.pose.orientation.w);
+                    double yaw = 2.0 * std::atan2(q.z(), q.w());
+                    tf2::Quaternion q_new(0.0, 0.0, yaw + M_PI);
+                    ps.pose.orientation = tf2::toMsg(q_new);
+                }
+                ROS_INFO_STREAM("Fill path " << best_idx << " reversed for shorter transition (dist=" << best_dist << "m).");
+            }
+
+            if (!chosen.path.poses.empty()) {
+                prev_x = chosen.path.poses.back().pose.position.x;
+                prev_y = chosen.path.poses.back().pose.position.y;
+            }
+
+            res.paths.push_back(chosen);
+        }
     }
 
     // Post-process generated paths to remove omega-shaped opposing cusps by inserting loops

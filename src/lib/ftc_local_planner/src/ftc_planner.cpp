@@ -114,6 +114,10 @@ namespace ftc_local_planner
         i_lat_error = 0.0;
         i_angle_error = 0.0;
 
+        // Reset obstacle-aware rotation direction preferences.
+        preferred_pre_rotate_sign_  = 0;
+        preferred_post_rotate_sign_ = 0;
+
         nav_msgs::Path path;
 
         if (global_plan.size() > 2)
@@ -124,6 +128,21 @@ namespace ftc_local_planner
             global_plan[global_plan.size() - 2].pose.orientation = global_plan[global_plan.size() - 3].pose.orientation;
             path.header = plan.front().header;
             path.poses = plan;
+
+            // Phase 3: choose the safer PRE_ROTATE direction up front.
+            if (config.obstacle_aware_rotation) {
+                geometry_msgs::PoseStamped robot_pose;
+                if (costmap->getRobotPose(robot_pose)) {
+                    tf2::Quaternion q_robot(robot_pose.pose.orientation.x, robot_pose.pose.orientation.y,
+                                            robot_pose.pose.orientation.z, robot_pose.pose.orientation.w);
+                    double robot_yaw = 2.0 * std::atan2(q_robot.z(), q_robot.w());
+
+                    tf2::Quaternion q_first(global_plan[0].pose.orientation.x, global_plan[0].pose.orientation.y,
+                                            global_plan[0].pose.orientation.z, global_plan[0].pose.orientation.w);
+                    double pre_target_yaw = 2.0 * std::atan2(q_first.z(), q_first.w());
+                    preferred_pre_rotate_sign_ = selectRotationDirection(robot_yaw, pre_target_yaw);
+                }
+            }
         }
         else
         {
@@ -133,9 +152,85 @@ namespace ftc_local_planner
         }
         global_plan_pub.publish(path);
 
-        ROS_INFO_STREAM("FTCLocalPlannerROS: Got new global plan with " << plan.size() << " points.");
+        ROS_INFO_STREAM("FTCLocalPlannerROS: Got new global plan with " << plan.size() << " points."
+            << " pre_rotate_pref=" << preferred_pre_rotate_sign_);
 
         return true;
+    }
+
+    // -----------------------------------------------------------------------
+    // Obstacle-aware rotation helpers  (Phase 3)
+    // -----------------------------------------------------------------------
+
+    double FTCPlanner::sweepFootprintCost(double cx, double cy, double angle)
+    {
+        std::vector<geometry_msgs::Point> footprint = costmap->getRobotFootprint();
+        if (footprint.empty()) return 0.0;
+
+        const double cos_a = std::cos(angle);
+        const double sin_a = std::sin(angle);
+        double max_cost = 0.0;
+
+        for (const auto &fp : footprint) {
+            double wx = cx + cos_a * fp.x - sin_a * fp.y;
+            double wy = cy + sin_a * fp.x + cos_a * fp.y;
+            unsigned int mx, my;
+            if (costmap_map_->worldToMap(wx, wy, mx, my)) {
+                unsigned char cost = costmap_map_->getCost(mx, my);
+                if (cost > max_cost) max_cost = cost;
+            } else {
+                return static_cast<double>(costmap_2d::LETHAL_OBSTACLE);  // outside map
+            }
+        }
+        return max_cost;
+    }
+
+    int FTCPlanner::selectRotationDirection(double robot_yaw, double target_yaw)
+    {
+        if (!config.obstacle_aware_rotation) return 0;
+
+        // Normalise signed delta to [-π, π].
+        double delta = target_yaw - robot_yaw;
+        while (delta >  M_PI) delta -= 2.0 * M_PI;
+        while (delta < -M_PI) delta += 2.0 * M_PI;
+
+        geometry_msgs::PoseStamped robot_pose;
+        if (!costmap->getRobotPose(robot_pose)) {
+            return (delta >= 0) ? +1 : -1;  // fallback: shorter direction
+        }
+        const double cx = robot_pose.pose.position.x;
+        const double cy = robot_pose.pose.position.y;
+
+        double step = config.rotation_check_step_deg * M_PI / 180.0;
+        if (step <= 0.0) step = 5.0 * M_PI / 180.0;
+
+        // CCW arc: robot_yaw  →  robot_yaw + ccw_span  reaches target_yaw
+        double ccw_span = (delta >= 0) ? delta : (2.0 * M_PI + delta);
+        double max_cost_ccw = 0.0;
+        for (double a = 0.0; a <= ccw_span; a += step) {
+            double c = sweepFootprintCost(cx, cy, robot_yaw + a);
+            if (c > max_cost_ccw) max_cost_ccw = c;
+            if (c >= costmap_2d::LETHAL_OBSTACLE) break;  // no point checking further
+        }
+
+        // CW arc: robot_yaw  →  robot_yaw - cw_span  reaches target_yaw
+        double cw_span = (delta <= 0) ? -delta : (2.0 * M_PI - delta);
+        double max_cost_cw = 0.0;
+        for (double a = 0.0; a <= cw_span; a += step) {
+            double c = sweepFootprintCost(cx, cy, robot_yaw - a);
+            if (c > max_cost_cw) max_cost_cw = c;
+            if (c >= costmap_2d::LETHAL_OBSTACLE) break;
+        }
+
+        ROS_DEBUG_STREAM("FTCPlanner selectRotDir: delta=" << (delta * 180.0 / M_PI) << "deg"
+            << " cost_ccw=" << max_cost_ccw << " cost_cw=" << max_cost_cw
+            << " threshold=" << config.rotation_override_cost_threshold);
+
+        // If both arcs have similar cost, keep the shorter/natural direction.
+        if (std::abs(max_cost_ccw - max_cost_cw) < config.rotation_override_cost_threshold) {
+            return (delta >= 0) ? +1 : -1;
+        }
+        return (max_cost_ccw <= max_cost_cw) ? +1 : -1;
     }
 
     FTCPlanner::~FTCPlanner()
@@ -505,6 +600,26 @@ namespace ftc_local_planner
             if (distance < config.max_goal_distance_error)
             {
                 ROS_INFO_STREAM("FTCLocalPlannerROS: Reached goal position.");
+                // Compute POST_ROTATE preferred direction now that we're at the goal position
+                if (config.obstacle_aware_rotation)
+                {
+                    geometry_msgs::PoseStamped robot_pose;
+                    if (costmap->getRobotPose(robot_pose))
+                    {
+                        tf2::Quaternion q_robot(robot_pose.pose.orientation.x,
+                                                robot_pose.pose.orientation.y,
+                                                robot_pose.pose.orientation.z,
+                                                robot_pose.pose.orientation.w);
+                        double robot_yaw = 2.0 * std::atan2(q_robot.z(), q_robot.w());
+                        const auto &last_pose = global_plan.back();
+                        tf2::Quaternion q_last(last_pose.pose.orientation.x,
+                                               last_pose.pose.orientation.y,
+                                               last_pose.pose.orientation.z,
+                                               last_pose.pose.orientation.w);
+                        double target_yaw = 2.0 * std::atan2(q_last.z(), q_last.w());
+                        preferred_post_rotate_sign_ = selectRotationDirection(robot_yaw, target_yaw);
+                    }
+                }
                 return POST_ROTATE;
             }
         }
@@ -769,6 +884,21 @@ namespace ftc_local_planner
             else if (ang_speed < -config.max_cmd_vel_ang)
             {
                 ang_speed = -config.max_cmd_vel_ang;
+            }
+
+            // Phase 3: obstacle-aware rotation direction override
+            if (config.obstacle_aware_rotation && (current_state == PRE_ROTATE || current_state == POST_ROTATE))
+            {
+                int preferred_sign = (current_state == PRE_ROTATE) ? preferred_pre_rotate_sign_ : preferred_post_rotate_sign_;
+                if (preferred_sign != 0)
+                {
+                    bool going_wrong_way = (preferred_sign > 0 && ang_speed < 0) || (preferred_sign < 0 && ang_speed > 0);
+                    if (going_wrong_way)
+                    {
+                        double min_ang = config.max_cmd_vel_ang * 0.3;
+                        ang_speed = preferred_sign * std::max(std::abs(ang_speed), min_ang);
+                    }
+                }
             }
 
             cmd_vel.twist.angular.z = ang_speed;
