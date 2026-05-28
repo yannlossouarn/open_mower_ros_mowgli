@@ -15,7 +15,6 @@
 #include "MowingBehavior.h"
 
 #include <cryptopp/cryptlib.h>
-#include "mbf_msgs/GetPathAction.h"
 #include <cryptopp/hex.h>
 #include <cryptopp/sha.h>
 #include <nav_msgs/Path.h>
@@ -26,6 +25,7 @@
 
 #include <cmath>
 
+#include "mbf_msgs/GetPathAction.h"
 #include "mower_logic/CheckPoint.h"
 #include "mower_map/ClearNavPointSrv.h"
 #include "mower_map/GetMowingAreaSrv.h"
@@ -238,14 +238,13 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
   // straight-line ExePath that Phase 2a uses today.
   if (config.approach_enabled && mbfClientGetPath->isServerConnected()) {
     int precomputed = 0;
-    ROS_INFO_STREAM("MowingBehavior: Pre-computing approach paths for " << currentMowingPaths.size()
-                                                                        << " segments...");
+    ROS_INFO_STREAM("MowingBehavior: Pre-computing approach paths for " << currentMowingPaths.size() << " segments...");
     for (auto& segment : currentMowingPaths) {
       if (segment.path.poses.empty()) continue;
 
       const auto& startPose = segment.path.poses.front();
-      tf2::Quaternion q(startPose.pose.orientation.x, startPose.pose.orientation.y,
-                        startPose.pose.orientation.z, startPose.pose.orientation.w);
+      tf2::Quaternion q(startPose.pose.orientation.x, startPose.pose.orientation.y, startPose.pose.orientation.z,
+                        startPose.pose.orientation.w);
       const double mow_yaw = 2.0 * std::atan2(q.z(), q.w());
 
       geometry_msgs::PoseStamped approachPose;
