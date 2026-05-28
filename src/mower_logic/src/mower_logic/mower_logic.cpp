@@ -34,6 +34,7 @@
 #include "behaviors/IdleBehavior.h"
 #include "ftc_local_planner/PlannerGetProgress.h"
 #include "mbf_msgs/ExePathAction.h"
+#include "mbf_msgs/GetPathAction.h"
 #include "mbf_msgs/MoveBaseAction.h"
 #include "mower_logic/MowerLogicConfig.h"
 #include "mower_map/ClearMapSrv.h"
@@ -64,6 +65,7 @@ ros::NodeHandle* paramNh;
 dynamic_reconfigure::Server<mower_logic::MowerLogicConfig>* reconfigServer;
 actionlib::SimpleActionClient<mbf_msgs::MoveBaseAction>* mbfClient;
 actionlib::SimpleActionClient<mbf_msgs::ExePathAction>* mbfClientExePath;
+actionlib::SimpleActionClient<mbf_msgs::GetPathAction>* mbfClientGetPath;
 
 ros::Publisher cmd_vel_pub, high_level_state_publisher;
 mower_logic::MowerLogicConfig last_config;
@@ -691,6 +693,7 @@ int main(int argc, char** argv) {
 
   mbfClient = new actionlib::SimpleActionClient<mbf_msgs::MoveBaseAction>("/move_base_flex/move_base");
   mbfClientExePath = new actionlib::SimpleActionClient<mbf_msgs::ExePathAction>("/move_base_flex/exe_path");
+  mbfClientGetPath = new actionlib::SimpleActionClient<mbf_msgs::GetPathAction>("/move_base_flex/get_path");
 
   emergency_state_subscriber.Start(n);
   status_state_subscriber.Start(n);
@@ -715,6 +718,7 @@ int main(int argc, char** argv) {
       delete (reconfigServer);
       delete (mbfClient);
       delete (mbfClientExePath);
+      delete (mbfClientGetPath);
       return 1;
     }
     r.sleep();
@@ -725,6 +729,7 @@ int main(int argc, char** argv) {
       delete (reconfigServer);
       delete (mbfClient);
       delete (mbfClientExePath);
+      delete (mbfClientGetPath);
       return 1;
     }
     r.sleep();
@@ -736,6 +741,7 @@ int main(int argc, char** argv) {
       delete (reconfigServer);
       delete (mbfClient);
       delete (mbfClientExePath);
+      delete (mbfClientGetPath);
       return 1;
     }
     r.sleep();
@@ -747,6 +753,7 @@ int main(int argc, char** argv) {
       delete (reconfigServer);
       delete (mbfClient);
       delete (mbfClientExePath);
+      delete (mbfClientGetPath);
       return 1;
     }
     r.sleep();
@@ -757,6 +764,7 @@ int main(int argc, char** argv) {
       delete (reconfigServer);
       delete (mbfClient);
       delete (mbfClientExePath);
+      delete (mbfClientGetPath);
       return 1;
     }
     r.sleep();
@@ -767,6 +775,7 @@ int main(int argc, char** argv) {
       delete (reconfigServer);
       delete (mbfClient);
       delete (mbfClientExePath);
+      delete (mbfClientGetPath);
       return 1;
     }
     r.sleep();
@@ -778,6 +787,7 @@ int main(int argc, char** argv) {
     delete (reconfigServer);
     delete (mbfClient);
     delete (mbfClientExePath);
+    delete (mbfClientGetPath);
 
     return 1;
   }
@@ -788,6 +798,7 @@ int main(int argc, char** argv) {
     delete (reconfigServer);
     delete (mbfClient);
     delete (mbfClientExePath);
+    delete (mbfClientGetPath);
 
     return 1;
   }
@@ -797,6 +808,7 @@ int main(int argc, char** argv) {
     delete (reconfigServer);
     delete (mbfClient);
     delete (mbfClientExePath);
+    delete (mbfClientGetPath);
 
     return 1;
   }
@@ -807,6 +819,7 @@ int main(int argc, char** argv) {
     delete (reconfigServer);
     delete (mbfClient);
     delete (mbfClientExePath);
+    delete (mbfClientGetPath);
 
     return 1;
   }
@@ -816,6 +829,7 @@ int main(int argc, char** argv) {
     delete (reconfigServer);
     delete (mbfClient);
     delete (mbfClientExePath);
+    delete (mbfClientGetPath);
 
     return 1;
   }
@@ -826,6 +840,7 @@ int main(int argc, char** argv) {
     delete (reconfigServer);
     delete (mbfClient);
     delete (mbfClientExePath);
+    delete (mbfClientGetPath);
     return 2;
   }
   ROS_INFO("Waiting for docking point server");
@@ -834,6 +849,7 @@ int main(int argc, char** argv) {
     delete (reconfigServer);
     delete (mbfClient);
     delete (mbfClientExePath);
+    delete (mbfClientGetPath);
     return 2;
   }
   ROS_INFO("Waiting for nav point server");
@@ -842,6 +858,7 @@ int main(int argc, char** argv) {
     delete (reconfigServer);
     delete (mbfClient);
     delete (mbfClientExePath);
+    delete (mbfClientGetPath);
     return 2;
   }
   ROS_INFO("Waiting for clear nav point server");
@@ -850,6 +867,7 @@ int main(int argc, char** argv) {
     delete (reconfigServer);
     delete (mbfClient);
     delete (mbfClientExePath);
+    delete (mbfClientGetPath);
     return 2;
   }
 
@@ -859,6 +877,7 @@ int main(int argc, char** argv) {
     delete (reconfigServer);
     delete (mbfClient);
     delete (mbfClientExePath);
+    delete (mbfClientGetPath);
     return 3;
   }
 
@@ -868,6 +887,7 @@ int main(int argc, char** argv) {
     delete (reconfigServer);
     delete (mbfClient);
     delete (mbfClientExePath);
+    delete (mbfClientGetPath);
     return 3;
   }
 
@@ -922,5 +942,6 @@ int main(int argc, char** argv) {
   delete (reconfigServer);
   delete (mbfClient);
   delete (mbfClientExePath);
+  delete (mbfClientGetPath);
   return 0;
 }
