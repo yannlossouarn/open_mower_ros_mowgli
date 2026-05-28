@@ -389,60 +389,88 @@ bool MowingBehavior::execute_mowing_plan() {
 
       // -----------------------------------------------------------------------
       // Phase 2b: TEB transition planner
+      // Navigate to the approach waypoint (approach_distance m behind strip
+      // start) with TEB so the robot arrives already aligned and clear of
+      // obstacles.  Phase 2a then does the final short glide-in with FTC.
+      // Sending TEB to the strip start itself is infeasible when the start is
+      // obstacle-adjacent (TEB's min_obstacle_dist prevents it from reaching
+      // that point).
       // -----------------------------------------------------------------------
-      if (localConfig.use_teb_for_transition) {
-        ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Using TEB TransitionPlanner.");
-        mbf_msgs::MoveBaseGoal mbGoal;
-        mbGoal.target_pose = startPose;
-        mbGoal.controller = "TransitionPlanner";
-        mbfClient->sendGoal(mbGoal);
-        sleep(1);
-        ros::Rate r_teb(10);
-        while (ros::ok()) {
-          auto st = mbfClient->getState();
-          if (st.state_ == actionlib::SimpleClientGoalState::ACTIVE ||
-              st.state_ == actionlib::SimpleClientGoalState::PENDING) {
-            if (skip_area) {
-              mbfClient->cancelAllGoals();
-              mowerEnabled = false;
-              currentMowingPaths.clear();
-              skip_area = false;
-              return true;
+      if (localConfig.use_teb_for_transition && localConfig.approach_enabled) {
+        tf2::Quaternion q_start(startPose.pose.orientation.x, startPose.pose.orientation.y,
+                                startPose.pose.orientation.z, startPose.pose.orientation.w);
+        double mow_yaw = 2.0 * std::atan2(q_start.z(), q_start.w());
+
+        geometry_msgs::PoseStamped approachPose;
+        approachPose.header = startPose.header;
+        approachPose.pose.position.x = startPose.pose.position.x - localConfig.approach_distance * std::cos(mow_yaw);
+        approachPose.pose.position.y = startPose.pose.position.y - localConfig.approach_distance * std::sin(mow_yaw);
+        approachPose.pose.position.z = 0.0;
+        approachPose.pose.orientation = startPose.pose.orientation;
+
+        auto robotPose = getPose();
+        double dx = approachPose.pose.position.x - robotPose.pose.pose.position.x;
+        double dy = approachPose.pose.position.y - robotPose.pose.pose.position.y;
+        double dist_to_approach = std::sqrt(dx * dx + dy * dy);
+
+        if (dist_to_approach > localConfig.approach_min_distance) {
+          ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Using TEB TransitionPlanner to approach waypoint (dist="
+                          << dist_to_approach << "m).");
+          mbf_msgs::MoveBaseGoal mbGoal;
+          mbGoal.target_pose = approachPose;
+          mbGoal.controller = "TransitionPlanner";
+          mbfClient->sendGoal(mbGoal);
+          sleep(1);
+          ros::Rate r_teb(10);
+          while (ros::ok()) {
+            auto st = mbfClient->getState();
+            if (st.state_ == actionlib::SimpleClientGoalState::ACTIVE ||
+                st.state_ == actionlib::SimpleClientGoalState::PENDING) {
+              if (skip_area) {
+                mbfClient->cancelAllGoals();
+                mowerEnabled = false;
+                currentMowingPaths.clear();
+                skip_area = false;
+                return true;
+              }
+              if (skip_path) {
+                skip_path = false;
+                currentMowingPath++;
+                currentMowingPathIndex = 0;
+                return false;
+              }
+              if (aborted) {
+                mbfClient->cancelAllGoals();
+                mowerEnabled = false;
+                return false;
+              }
+              if (requested_pause_flag) {
+                mbfClient->cancelAllGoals();
+                mowerEnabled = false;
+                return false;
+              }
+            } else {
+              break;
             }
-            if (skip_path) {
-              skip_path = false;
-              currentMowingPath++;
-              currentMowingPathIndex = 0;
-              return false;
-            }
-            if (aborted) {
-              mbfClient->cancelAllGoals();
-              mowerEnabled = false;
-              return false;
-            }
-            if (requested_pause_flag) {
-              mbfClient->cancelAllGoals();
-              mowerEnabled = false;
-              return false;
-            }
-          } else {
-            break;
+            r_teb.sleep();
           }
-          r_teb.sleep();
-        }
-        if (mbfClient->getState().state_ == actionlib::SimpleClientGoalState::SUCCEEDED) {
-          first_point_reached = true;
-          ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) TEB TransitionPlanner succeeded.");
+          if (mbfClient->getState().state_ == actionlib::SimpleClientGoalState::SUCCEEDED) {
+            ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) TEB TransitionPlanner reached approach waypoint.");
+          } else {
+            ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) TEB TransitionPlanner failed (state="
+                            << mbfClient->getState().state_ << "), proceeding to FTC approach.");
+          }
         } else {
-          ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) TEB TransitionPlanner failed (state="
-                          << mbfClient->getState().state_ << "), falling back.");
+          ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Already near approach waypoint (dist="
+                          << dist_to_approach << "m), skipping TEB transit.");
         }
       }
 
       // -----------------------------------------------------------------------
-      // Phase 2a: approach-waypoint strategy (FTC-based, default)
+      // Phase 2a: approach-waypoint strategy (FTC-based)
+      // Runs after TEB transit (use_teb_for_transition=true) or standalone.
       // -----------------------------------------------------------------------
-      if (!first_point_reached && !localConfig.use_teb_for_transition && localConfig.approach_enabled) {
+      if (!first_point_reached && localConfig.approach_enabled) {
         // Extract mowing direction from the start pose orientation.
         tf2::Quaternion q_start(startPose.pose.orientation.x, startPose.pose.orientation.y,
                                 startPose.pose.orientation.z, startPose.pose.orientation.w);
