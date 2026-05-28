@@ -230,55 +230,6 @@ bool MowingBehavior::create_mowing_plan(int area_index) {
 
   currentMowingPaths = pathSrv.response.paths;
 
-  // Pre-compute obstacle-aware approach paths using GlobalPlanner.
-  // For each segment, plan from the approach waypoint (approach_distance m behind
-  // the strip start along the mowing direction) to the strip start itself.
-  // GlobalPlanner routes around any obstacle that would block the straight-line glide-in.
-  // The result is stored in approach_path; an empty approach_path means fall back to the
-  // straight-line ExePath that Phase 2a uses today.
-  if (config.approach_enabled && mbfClientGetPath->isServerConnected()) {
-    int precomputed = 0;
-    ROS_INFO_STREAM("MowingBehavior: Pre-computing approach paths for " << currentMowingPaths.size() << " segments...");
-    for (auto& segment : currentMowingPaths) {
-      if (segment.path.poses.empty()) continue;
-
-      const auto& startPose = segment.path.poses.front();
-      tf2::Quaternion q(startPose.pose.orientation.x, startPose.pose.orientation.y, startPose.pose.orientation.z,
-                        startPose.pose.orientation.w);
-      const double mow_yaw = 2.0 * std::atan2(q.z(), q.w());
-
-      geometry_msgs::PoseStamped approachPose;
-      approachPose.header = startPose.header;
-      approachPose.header.stamp = ros::Time(0);
-      approachPose.pose.position.x = startPose.pose.position.x - config.approach_distance * std::cos(mow_yaw);
-      approachPose.pose.position.y = startPose.pose.position.y - config.approach_distance * std::sin(mow_yaw);
-      approachPose.pose.position.z = 0.0;
-      approachPose.pose.orientation = startPose.pose.orientation;
-
-      geometry_msgs::PoseStamped targetPose = startPose;
-      targetPose.header.stamp = ros::Time(0);
-
-      mbf_msgs::GetPathGoal getPathGoal;
-      getPathGoal.use_start_pose = true;
-      getPathGoal.start_pose = approachPose;
-      getPathGoal.target_pose = targetPose;
-      getPathGoal.planner = "GlobalPlanner";
-      getPathGoal.tolerance = 0.1;
-
-      mbfClientGetPath->sendGoal(getPathGoal);
-      if (mbfClientGetPath->waitForResult(ros::Duration(5.0)) &&
-          mbfClientGetPath->getState() == actionlib::SimpleClientGoalState::SUCCEEDED) {
-        auto result = mbfClientGetPath->getResult();
-        if (result && !result->path.poses.empty()) {
-          segment.approach_path = result->path;
-          ++precomputed;
-        }
-      }
-    }
-    ROS_INFO_STREAM("MowingBehavior: Pre-computed " << precomputed << " / " << currentMowingPaths.size()
-                                                    << " approach paths.");
-  }
-
   // Calculate mowing plan digest from the poses
   // TODO: move to slic3r_coverage_planner
   CryptoPP::SHA256 hash;
@@ -597,14 +548,31 @@ bool MowingBehavior::execute_mowing_plan() {
 
           if (approach_ok) {
             // -- Step 2: ExePath to align with mowing direction --
-            // Use pre-computed GlobalPlanner approach_path when available (obstacle-aware);
-            // fall back to straight-line {approach → mid → start} otherwise.
+            // Robot is now at the approach waypoint. Ask GlobalPlanner for an
+            // obstacle-aware path from here (use_start_pose=false → robot's actual
+            // TF pose) to the strip start. Falls back to straight-line if planning
+            // fails or the server is unavailable.
             nav_msgs::Path align_path;
-            if (!path.approach_path.poses.empty()) {
-              align_path = path.approach_path;
-            } else {
-              align_path.header = startPose.header;
-              align_path.poses = {approachPose, midPose, startPose};
+            align_path.header = startPose.header;
+            align_path.poses = {approachPose, midPose, startPose};
+            if (mbfClientGetPath->isServerConnected()) {
+              geometry_msgs::PoseStamped targetPose = startPose;
+              targetPose.header.stamp = ros::Time(0);
+              mbf_msgs::GetPathGoal getPathGoal;
+              getPathGoal.use_start_pose = false;
+              getPathGoal.target_pose = targetPose;
+              getPathGoal.planner = "GlobalPlanner";
+              getPathGoal.tolerance = 0.1;
+              mbfClientGetPath->sendGoal(getPathGoal);
+              if (mbfClientGetPath->waitForResult(ros::Duration(5.0)) &&
+                  mbfClientGetPath->getState() == actionlib::SimpleClientGoalState::SUCCEEDED) {
+                auto result = mbfClientGetPath->getResult();
+                if (result && !result->path.poses.empty()) {
+                  align_path = result->path;
+                  ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) GlobalPlanner approach path: "
+                                  << align_path.poses.size() << " poses.");
+                }
+              }
             }
 
             mbf_msgs::ExePathGoal exeGoal;
@@ -667,11 +635,26 @@ bool MowingBehavior::execute_mowing_plan() {
           ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Already at approach point ("
                           << dist_to_approach << "m), running ExePath to strip start.");
           nav_msgs::Path align_path;
-          if (!path.approach_path.poses.empty()) {
-            align_path = path.approach_path;
-          } else {
-            align_path.header = startPose.header;
-            align_path.poses = {approachPose, midPose, startPose};
+          align_path.header = startPose.header;
+          align_path.poses = {approachPose, midPose, startPose};
+          if (mbfClientGetPath->isServerConnected()) {
+            geometry_msgs::PoseStamped targetPose = startPose;
+            targetPose.header.stamp = ros::Time(0);
+            mbf_msgs::GetPathGoal getPathGoal;
+            getPathGoal.use_start_pose = false;
+            getPathGoal.target_pose = targetPose;
+            getPathGoal.planner = "GlobalPlanner";
+            getPathGoal.tolerance = 0.1;
+            mbfClientGetPath->sendGoal(getPathGoal);
+            if (mbfClientGetPath->waitForResult(ros::Duration(5.0)) &&
+                mbfClientGetPath->getState() == actionlib::SimpleClientGoalState::SUCCEEDED) {
+              auto result = mbfClientGetPath->getResult();
+              if (result && !result->path.poses.empty()) {
+                align_path = result->path;
+                ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) GlobalPlanner approach path: " << align_path.poses.size()
+                                                                                              << " poses.");
+              }
+            }
           }
 
           mbf_msgs::ExePathGoal exeGoal;
