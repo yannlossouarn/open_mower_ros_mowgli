@@ -605,8 +605,64 @@ bool MowingBehavior::execute_mowing_plan() {
                             << mbfClient->getState().state_ << "), falling back to standard navigation.");
           }
         } else {
-          ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Robot already close to approach point ("
-                          << dist_to_approach << "m), skipping approach waypoint.");
+          // Robot is already at the approach waypoint (TEB just delivered it here).
+          // Skip the MoveBase step but still run the ExePath to glide into the strip start.
+          ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Already at approach point ("
+                          << dist_to_approach << "m), running ExePath to strip start.");
+          nav_msgs::Path align_path;
+          align_path.header = startPose.header;
+          align_path.poses = {approachPose, midPose, startPose};
+
+          mbf_msgs::ExePathGoal exeGoal;
+          exeGoal.path = align_path;
+          exeGoal.angle_tolerance = 0.1;
+          exeGoal.dist_tolerance = 0.15;
+          exeGoal.tolerance_from_action = true;
+          exeGoal.controller = "FTCPlanner";
+          mbfClientExePath->sendGoal(exeGoal);
+          sleep(1);
+          ros::Rate r_exe2(10);
+          while (ros::ok()) {
+            auto st = mbfClientExePath->getState();
+            if (st.state_ == actionlib::SimpleClientGoalState::ACTIVE ||
+                st.state_ == actionlib::SimpleClientGoalState::PENDING) {
+              if (skip_area) {
+                mbfClientExePath->cancelAllGoals();
+                mowerEnabled = false;
+                currentMowingPaths.clear();
+                skip_area = false;
+                return true;
+              }
+              if (skip_path) {
+                skip_path = false;
+                currentMowingPath++;
+                currentMowingPathIndex = 0;
+                return false;
+              }
+              if (aborted) {
+                mbfClientExePath->cancelAllGoals();
+                mowerEnabled = false;
+                return false;
+              }
+              if (requested_pause_flag) {
+                mbfClientExePath->cancelAllGoals();
+                mowerEnabled = false;
+                return false;
+              }
+            } else {
+              break;
+            }
+            r_exe2.sleep();
+          }
+          auto exe_state2 = mbfClientExePath->getState().state_;
+          if (exe_state2 == actionlib::SimpleClientGoalState::SUCCEEDED ||
+              exe_state2 == actionlib::SimpleClientGoalState::PREEMPTED) {
+            first_point_reached = true;
+            ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Approach path succeeded.");
+          } else {
+            ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) Approach ExePath failed (state="
+                            << exe_state2 << "), falling back to standard navigation.");
+          }
         }
       }
 
