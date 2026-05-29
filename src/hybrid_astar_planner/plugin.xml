@@ -1,0 +1,11 @@
+<library path="lib/libhybrid_astar_planner">
+  <class name="hybrid_astar_planner/HybridAstarPlanner"
+         type="hybrid_astar_planner::HybridAstarPlanner"
+         base_class_type="nav_core::BaseGlobalPlanner">
+    <description>
+      Hybrid A* heading-aware global planner for differential-drive robots.
+      Used as the move_base_flex TransitionPlanner to reach mow-strip starts
+      with the correct orientation without large in-place rotations.
+    </description>
+  </class>
+</library>
