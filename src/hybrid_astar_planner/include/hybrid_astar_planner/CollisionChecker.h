@@ -36,6 +36,10 @@ class CollisionChecker {
   /// Cell occupancy for the 2D heuristic (window-relative cells).
   bool isTraversable(const Node2D* node) const;
 
+  /// Costmap cost (0..254) at a node's centre cell (window-relative).
+  unsigned char costAt(const Node3D* node) const;
+  unsigned char costAt(const Node2D* node) const;
+
  private:
   costmap_2d::Costmap2D* costmap_;
   // CostmapModel::footprintCost is non-const; mutable keeps isTraversable const.

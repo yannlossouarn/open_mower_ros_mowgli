@@ -194,8 +194,12 @@ class Node3D {
   }
 
   /// Increase cost-so-far for this successor coming from its predecessor.
-  void updateG(const Primitives& mp, const Params& params) {
-    g += (pred && pred->prim != prim) ? mp.dx[0] * static_cast<float>(params.penalty_turning) : mp.dx[0];
+  /// cellCost is the costmap cost (0..254) at this node, penalised so the
+  /// search prefers clearance over length.
+  void updateG(const Primitives& mp, const Params& params, float cellCost) {
+    const float move = (pred && pred->prim != prim) ? mp.dx[0] * static_cast<float>(params.penalty_turning) : mp.dx[0];
+    const float costPenalty = static_cast<float>(params.weight_costmap) * (cellCost / 254.0f) * mp.dx[0];
+    g += move + costPenalty;
   }
 
   /// Equal if same cell and heading within one discretisation step.

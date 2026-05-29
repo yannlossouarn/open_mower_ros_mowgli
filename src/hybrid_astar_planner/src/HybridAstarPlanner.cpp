@@ -55,6 +55,24 @@ void HybridAstarPlanner::initialize(std::string name, costmap_2d::Costmap2DROS* 
   pnh.param("dubins_step_size", params_.dubins_step_size, params_.dubins_step_size);
   pnh.param("analytic_expansion_interval", params_.analytic_expansion_interval, params_.analytic_expansion_interval);
   pnh.param("window_margin", params_.window_margin, params_.window_margin);
+  pnh.param("robot_front", params_.robot_front, params_.robot_front);
+  pnh.param("robot_rear", params_.robot_rear, params_.robot_rear);
+  pnh.param("robot_half_width", params_.robot_half_width, params_.robot_half_width);
+  pnh.param("weight_costmap", params_.weight_costmap, params_.weight_costmap);
+  pnh.param("shot_max_cost", params_.shot_max_cost, params_.shot_max_cost);
+
+  // Build the explicit footprint polygon (base_link, x forward). The costmap's
+  // own footprint is unreliable in this stack, which made collision checks
+  // degrade to a single centre cell; using our own restores body-aware checks.
+  auto pt = [](double x, double y) {
+    geometry_msgs::Point p;
+    p.x = x;
+    p.y = y;
+    p.z = 0.0;
+    return p;
+  };
+  footprint_ = {pt(params_.robot_front, params_.robot_half_width), pt(params_.robot_front, -params_.robot_half_width),
+                pt(-params_.robot_rear, -params_.robot_half_width), pt(-params_.robot_rear, params_.robot_half_width)};
 
   plan_pub_ = pnh.advertise<nav_msgs::Path>("plan", 1);
 
@@ -62,7 +80,9 @@ void HybridAstarPlanner::initialize(std::string name, costmap_2d::Costmap2DROS* 
   ROS_INFO_STREAM("HybridAstarPlanner: initialized (frame="
                   << global_frame_ << ", " << costmap_->getSizeInCellsX() << "x" << costmap_->getSizeInCellsY()
                   << " cells, res=" << costmap_->getResolution() << "m, R=" << params_.min_turning_radius
-                  << "m, step=" << params_.step_size << "m, headings=" << params_.headings << ").");
+                  << "m, step=" << params_.step_size << "m, headings=" << params_.headings
+                  << ", weight_costmap=" << params_.weight_costmap << ", footprint=" << params_.robot_front << "/"
+                  << params_.robot_rear << "/" << params_.robot_half_width << ").");
 }
 
 bool HybridAstarPlanner::makePlan(const geometry_msgs::PoseStamped& start, const geometry_msgs::PoseStamped& goal,
@@ -133,7 +153,7 @@ bool HybridAstarPlanner::runHybridAStar(const geometry_msgs::PoseStamped& start,
   Node3D goalNode(gcx, gcy, normalizeHeadingRad(static_cast<float>(tf2::getYaw(goal.pose.orientation))), 0, 0, nullptr);
 
   const Primitives prims = makePrimitives(params_, res);
-  CollisionChecker cc(costmap_, costmap_ros_->getRobotFootprint(), minx, miny, width, height);
+  CollisionChecker cc(costmap_, footprint_, minx, miny, width, height);
 
   // Fast goal-feasibility precheck: if the robot footprint at the goal pose is
   // in collision (a common case for obstacle-adjacent mow-strip starts), no

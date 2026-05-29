@@ -27,10 +27,29 @@ struct Params {
 
   // Search limits
   int max_iterations = 30000;
-  double max_planning_time = 2.0;  ///< [s] wall-clock budget; bounds worst case on the Pi
+  double max_planning_time = 4.0;  ///< [s] wall-clock budget; one-shot global planner, so headroom
+                                   ///< matters more than latency (avoids falling back to an
+                                   ///< un-collision-checked straight line on hard near-obstacle plans)
 
   // Cost penalties (unitless multipliers on the base step cost)
   double penalty_turning = 1.05;
+
+  // Robot footprint (base_link frame, x forward), default Mowgli dimensions.
+  // The costmap's own footprint is unreliable in this stack, so the planner
+  // checks collisions against its own explicit footprint.
+  double robot_front = 0.473;       ///< [m] wheel axle -> front edge
+  double robot_rear = 0.100;        ///< [m] wheel axle -> rear edge
+  double robot_half_width = 0.212;  ///< [m] half the robot width
+
+  // Costmap cost penalty added to each expansion's cost so the search avoids
+  // the inflation zone. Deliberately large: clearance from obstacles is
+  // prioritised over path length (a high-cost step costs far more than the
+  // extra length of a detour around it).
+  double weight_costmap = 20.0;
+  // Reject an analytic (Dubins) shot if it passes through a cell whose cost is
+  // >= this, so the shot cannot bypass the cost-aware grid search near
+  // obstacles (0..254; lower = more conservative shots).
+  int shot_max_cost = 100;
 
   // Analytic expansion (Dubins shot)
   bool dubins_shot = true;

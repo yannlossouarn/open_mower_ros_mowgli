@@ -71,6 +71,24 @@ bool CollisionChecker::isTraversable(const Node3D* node) const {
   return cost >= 0.0;
 }
 
+unsigned char CollisionChecker::costAt(const Node3D* node) const {
+  const unsigned int mx = ox_ + static_cast<unsigned int>(node->getX());
+  const unsigned int my = oy_ + static_cast<unsigned int>(node->getY());
+  if (mx >= costmap_->getSizeInCellsX() || my >= costmap_->getSizeInCellsY()) {
+    return costmap_2d::LETHAL_OBSTACLE;
+  }
+  return costmap_->getCost(mx, my);
+}
+
+unsigned char CollisionChecker::costAt(const Node2D* node) const {
+  const unsigned int mx = ox_ + static_cast<unsigned int>(node->getX());
+  const unsigned int my = oy_ + static_cast<unsigned int>(node->getY());
+  if (mx >= costmap_->getSizeInCellsX() || my >= costmap_->getSizeInCellsY()) {
+    return costmap_2d::LETHAL_OBSTACLE;
+  }
+  return costmap_->getCost(mx, my);
+}
+
 bool CollisionChecker::isTraversable(const Node2D* node) const {
   const unsigned int mx = ox_ + node->getX();
   const unsigned int my = oy_ + node->getY();

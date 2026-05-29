@@ -33,7 +33,8 @@ struct CompareNodes {
 // cost-to-goal (in cells) of every reachable cell in nodes2D[i].g; unreachable
 // cells keep kBig2D. This replaces Kurzer's per-node on-demand 2D A* (which
 // re-ran and reset the whole field on every cache miss).
-void compute2DHeuristic(int goalX, int goalY, Node2D* nodes2D, int width, int height, CollisionChecker& cc) {
+void compute2DHeuristic(int goalX, int goalY, Node2D* nodes2D, int width, int height, const Params& params,
+                        CollisionChecker& cc) {
   for (int i = 0; i < width * height; ++i) {
     nodes2D[i] = Node2D(i % width, i / width, kBig2D, 0, nullptr);
   }
@@ -61,7 +62,11 @@ void compute2DHeuristic(int goalX, int goalY, Node2D* nodes2D, int width, int he
       Node2D probe(nx, ny, 0, 0, nullptr);
       if (!cc.isTraversable(&probe)) continue;
       const float step = std::sqrt(static_cast<float>(Node2D::dx[k] * Node2D::dx[k] + Node2D::dy[k] * Node2D::dy[k]));
-      const float ng = nodes2D[idx].getG() + step;
+      // Cost-aware edge weight (same penalty as the 3D search) so the heuristic
+      // reflects clearance, keeping A* well-guided even with a high weight.
+      const float cellCost = static_cast<float>(cc.costAt(&probe));
+      const float ng =
+          nodes2D[idx].getG() + step * (1.0f + static_cast<float>(params.weight_costmap) * (cellCost / 254.0f));
       const int ni = ny * width + nx;
       if (ng < nodes2D[ni].getG()) {
         nodes2D[ni].setG(ng);
@@ -119,7 +124,9 @@ bool dubinsShot(const Node3D& from, const Node3D& goal, double rCells, const Par
     ds.interpolate(a, b, f, s);
     Node3D probe(static_cast<float>(s->as<SE2>()->getX()), static_cast<float>(s->as<SE2>()->getY()),
                  normalizeHeadingRad(static_cast<float>(s->as<SE2>()->getYaw())), 0, 0, nullptr);
-    if (!cc.isTraversable(&probe)) {
+    // Reject the shot on collision OR on entering meaningful inflation, so the
+    // analytic shortcut cannot bypass the cost-aware grid search near obstacles.
+    if (!cc.isTraversable(&probe) || cc.costAt(&probe) >= params.shot_max_cost) {
       ok = false;
       break;
     }
@@ -147,7 +154,7 @@ PlanResult hybridAStar(Node3D& start, const Node3D& goal, Node3D* nodes3D, Node2
   PriorityQueue O;
 
   // Precompute the 2D holonomic heuristic field once (Dijkstra from goal cell).
-  compute2DHeuristic(static_cast<int>(goal.getX()), static_cast<int>(goal.getY()), nodes2D, width, height, cc);
+  compute2DHeuristic(static_cast<int>(goal.getX()), static_cast<int>(goal.getY()), nodes2D, width, height, params, cc);
 
   updateH(start, goal, nodes2D, width, height, rCells);
   start.open();
@@ -210,7 +217,7 @@ PlanResult hybridAStar(Node3D& start, const Node3D& goal, Node3D* nodes3D, Node2
 
         if (nSucc->isOnGrid(width, height, dh, params.headings) && cc.isTraversable(nSucc)) {
           if (!nodes3D[iSucc].isClosed() || iPred == iSucc) {
-            nSucc->updateG(prims, params);
+            nSucc->updateG(prims, params, static_cast<float>(cc.costAt(nSucc)));
             float newG = nSucc->getG();
 
             if (!nodes3D[iSucc].isOpen() || newG < nodes3D[iSucc].getG() || iPred == iSucc) {

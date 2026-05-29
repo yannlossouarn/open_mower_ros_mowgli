@@ -9,6 +9,7 @@
 
 #include <costmap_2d/costmap_2d.h>
 #include <costmap_2d/costmap_2d_ros.h>
+#include <geometry_msgs/Point.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <nav_core/base_global_planner.h>
 #include <ros/ros.h>
@@ -53,6 +54,7 @@ class HybridAstarPlanner : public nav_core::BaseGlobalPlanner {
   std::string global_frame_;
   ros::Publisher plan_pub_;
   Params params_;
+  std::vector<geometry_msgs::Point> footprint_;  ///< explicit footprint built from params
   bool initialized_ = false;
 };
 
