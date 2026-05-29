@@ -33,6 +33,7 @@
 #include "behaviors/Behavior.h"
 #include "behaviors/IdleBehavior.h"
 #include "ftc_local_planner/PlannerGetProgress.h"
+#include "mbf_msgs/CheckPose.h"
 #include "mbf_msgs/ExePathAction.h"
 #include "mbf_msgs/GetPathAction.h"
 #include "mbf_msgs/MoveBaseAction.h"
@@ -57,7 +58,8 @@
 #include "xbot_positioning/SetPoseSrv.h"
 
 ros::ServiceClient pathClient, mapClient, dockingPointClient, gpsClient, mowClient, emergencyClient, pathProgressClient,
-    setNavPointClient, clearNavPointClient, clearMapClient, positioningClient, actionRegistrationClient;
+    setNavPointClient, clearNavPointClient, clearMapClient, positioningClient, actionRegistrationClient,
+    checkPoseCostClient;
 
 ros::NodeHandle* n;
 ros::NodeHandle* paramNh;
@@ -136,6 +138,27 @@ mower_msgs::Power getPower() {
 
 xbot_msgs::AbsolutePose getPose() {
   return pose_state_subscriber.getMessage();
+}
+
+// Query MBF's global costmap for the cost at a pose via the check_pose_cost
+// service. Returns true only when the pose is FREE and its (inflated) costmap
+// cost is at or below max_cost — i.e. the robot has real clearance there.
+// Conservative by design: any service failure or non-FREE state returns false,
+// so callers never treat an unverified pose as safe.
+bool checkPoseClear(const geometry_msgs::PoseStamped& pose, double max_cost) {
+  mbf_msgs::CheckPose srv;
+  srv.request.pose = pose;
+  srv.request.safety_dist = 0.0;
+  srv.request.costmap = mbf_msgs::CheckPoseRequest::GLOBAL_COSTMAP;
+  srv.request.current_pose = false;
+  if (!checkPoseCostClient.call(srv)) {
+    ROS_WARN_THROTTLE(5.0, "checkPoseClear: check_pose_cost service call failed.");
+    return false;
+  }
+  if (srv.response.state != mbf_msgs::CheckPoseResponse::FREE) {
+    return false;
+  }
+  return static_cast<double>(srv.response.cost) <= max_cost;
 }
 
 void setEmergencyMode(bool emergency);
@@ -690,6 +713,8 @@ int main(int argc, char** argv) {
 
   setNavPointClient = n->serviceClient<mower_map::SetNavPointSrv>("mower_map_service/set_nav_point");
   clearNavPointClient = n->serviceClient<mower_map::ClearNavPointSrv>("mower_map_service/clear_nav_point");
+
+  checkPoseCostClient = n->serviceClient<mbf_msgs::CheckPose>("/move_base_flex/check_pose_cost");
 
   mbfClient = new actionlib::SimpleActionClient<mbf_msgs::MoveBaseAction>("/move_base_flex/move_base");
   mbfClientExePath = new actionlib::SimpleActionClient<mbf_msgs::ExePathAction>("/move_base_flex/exe_path");

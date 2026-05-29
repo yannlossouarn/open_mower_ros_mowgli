@@ -44,6 +44,7 @@ extern actionlib::SimpleActionClient<mbf_msgs::GetPathAction>* mbfClientGetPath;
 extern mower_logic::MowerLogicConfig getConfig();
 extern void setConfig(mower_logic::MowerLogicConfig);
 extern xbot_msgs::AbsolutePose getPose();
+extern bool checkPoseClear(const geometry_msgs::PoseStamped& pose, double max_cost);
 
 extern void registerActions(std::string prefix, const std::vector<xbot_msgs::ActionInfo>& actions);
 
@@ -380,123 +381,137 @@ bool MowingBehavior::execute_mowing_plan() {
       const auto& startPose = path.path.poses[currentMowingPathIndex];
       bool first_point_reached = false;
 
-      // -----------------------------------------------------------------------
-      // Drive to the mow-path start with the Hybrid A* planner: it produces a
-      // kinematically feasible, heading-aware path that ARRIVES at the start
-      // already aligned with the mowing direction (no in-place rotation) and
-      // keeps clearance from obstacles. FTCPlanner executes it. If Hybrid A*
-      // cannot plan (e.g. an unusually long transit) the MoveBase fails and the
-      // fallback below (default GlobalPlanner) provides robust degradation.
-      // -----------------------------------------------------------------------
-      {
-        mbf_msgs::MoveBaseGoal mbGoal;
-        mbGoal.target_pose = startPose;
-        mbGoal.controller = "FTCPlanner";
-        mbGoal.planner = "HybridAStarPlanner";
-        mbfClient->sendGoal(mbGoal);
+      // Navigation outcome of a single MoveBase goal. skip/abort/pause signals
+      // must unwind all the way out of execute_mowing_plan(), so driveTo only
+      // classifies the outcome and handleNavInterrupt performs the unwinding.
+      enum NavOutcome { NAV_SUCCEEDED, NAV_FAILED, NAV_SKIP_AREA, NAV_SKIP_PATH, NAV_ABORTED, NAV_PAUSED };
+
+      auto driveTo = [&](const geometry_msgs::PoseStamped& goal, const std::string& planner) -> NavOutcome {
+        mbf_msgs::MoveBaseGoal g;
+        g.target_pose = goal;
+        g.controller = "FTCPlanner";
+        if (!planner.empty()) g.planner = planner;
+        mbfClient->sendGoal(g);
         sleep(1);
-        ros::Rate r_ha(10);
+        ros::Rate r(10);
         while (ros::ok()) {
           auto st = mbfClient->getState();
           if (st.state_ == actionlib::SimpleClientGoalState::ACTIVE ||
               st.state_ == actionlib::SimpleClientGoalState::PENDING) {
-            if (skip_area) {
-              mbfClient->cancelAllGoals();
-              mowerEnabled = false;
-              currentMowingPaths.clear();
-              skip_area = false;
-              return true;
-            }
-            if (skip_path) {
-              skip_path = false;
-              currentMowingPath++;
-              currentMowingPathIndex = 0;
-              return false;
-            }
-            if (aborted) {
-              mbfClient->cancelAllGoals();
-              mowerEnabled = false;
-              return false;
-            }
-            if (requested_pause_flag) {
-              mbfClient->cancelAllGoals();
-              mowerEnabled = false;
-              return false;
-            }
+            if (skip_area) return NAV_SKIP_AREA;
+            if (skip_path) return NAV_SKIP_PATH;
+            if (aborted) return NAV_ABORTED;
+            if (requested_pause_flag) return NAV_PAUSED;
           } else {
-            break;
-          }
-          r_ha.sleep();
-        }
-        if (mbfClient->getState().state_ == actionlib::SimpleClientGoalState::SUCCEEDED) {
-          first_point_reached = true;
-          ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Hybrid A* reached the mow-path start.");
-        } else {
-          ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) Hybrid A* navigation failed (state="
-                          << mbfClient->getState().state_ << "), falling back to GlobalPlanner.");
-        }
-      }
-
-      // -----------------------------------------------------------------------
-      // Fallback: MoveBase to the start with the default planner (GlobalPlanner)
-      // + FTCPlanner, used only if Hybrid A* above could not plan.
-      // -----------------------------------------------------------------------
-      actionlib::SimpleClientGoalState current_status(actionlib::SimpleClientGoalState::PENDING);
-      if (!first_point_reached) {
-        mbf_msgs::MoveBaseGoal moveBaseGoal;
-        moveBaseGoal.target_pose = startPose;
-        moveBaseGoal.controller = "FTCPlanner";
-        mbfClient->sendGoal(moveBaseGoal);
-        sleep(1);
-        ros::Rate r(10);
-
-        // wait for path execution to finish
-        while (ros::ok()) {
-          current_status = mbfClient->getState();
-          if (current_status.state_ == actionlib::SimpleClientGoalState::ACTIVE ||
-              current_status.state_ == actionlib::SimpleClientGoalState::PENDING) {
-            // path is being executed, everything seems fine.
-            // check if we should pause or abort mowing
-            if (skip_area) {
-              ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) SKIP AREA was requested.");
-              // remove all paths in current area and return true
-              mowerEnabled = false;
-              mbfClientExePath->cancelAllGoals();
-              currentMowingPaths.clear();
-              skip_area = false;
-              return true;
-            }
-            if (skip_path) {
-              skip_path = false;
-              currentMowingPath++;
-              currentMowingPathIndex = 0;
-              return false;
-            }
-            if (aborted) {
-              ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) ABORT was requested - stopping path execution.");
-              mbfClientExePath->cancelAllGoals();
-              mowerEnabled = false;
-              return false;
-            }
-            if (requested_pause_flag) {
-              ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) PAUSE was requested - stopping path execution.");
-              mbfClientExePath->cancelAllGoals();
-              mowerEnabled = false;
-              return false;
-            }
-          } else {
-            ROS_INFO_STREAM("MowingBehavior: (FIRST POINT)  Got status "
-                            << current_status.state_ << " from MBF/FTCPlanner -> Stopping path execution.");
-            // we're done, break out of the loop
             break;
           }
           r.sleep();
         }
+        return mbfClient->getState().state_ == actionlib::SimpleClientGoalState::SUCCEEDED ? NAV_SUCCEEDED : NAV_FAILED;
+      };
 
-        if (current_status.state_ == actionlib::SimpleClientGoalState::SUCCEEDED) {
-          first_point_reached = true;
+      // Perform the side effects for an interrupting outcome and tell the caller
+      // whether (and with what value) to return from execute_mowing_plan().
+      auto handleNavInterrupt = [&](NavOutcome o, bool& ret) -> bool {
+        switch (o) {
+          case NAV_SKIP_AREA:
+            ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) SKIP AREA was requested.");
+            mbfClient->cancelAllGoals();
+            mbfClientExePath->cancelAllGoals();
+            mowerEnabled = false;
+            currentMowingPaths.clear();
+            skip_area = false;
+            ret = true;
+            return true;
+          case NAV_SKIP_PATH:
+            skip_path = false;
+            currentMowingPath++;
+            currentMowingPathIndex = 0;
+            ret = false;
+            return true;
+          case NAV_ABORTED:
+            ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) ABORT was requested - stopping path execution.");
+            mbfClient->cancelAllGoals();
+            mowerEnabled = false;
+            ret = false;
+            return true;
+          case NAV_PAUSED:
+            ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) PAUSE was requested - stopping path execution.");
+            mbfClient->cancelAllGoals();
+            mowerEnabled = false;
+            ret = false;
+            return true;
+          default: return false;
+        }
+      };
+
+      // -----------------------------------------------------------------------
+      // 1) Hybrid A* directly to the mow-path start: a kinematically feasible,
+      //    heading-aware path that ARRIVES already aligned (no in-place rotation)
+      //    and keeps clearance from obstacles.
+      // -----------------------------------------------------------------------
+      {
+        NavOutcome o = driveTo(startPose, "HybridAStarPlanner");
+        bool ret;
+        if (handleNavInterrupt(o, ret)) return ret;
+        first_point_reached = (o == NAV_SUCCEEDED);
+        if (first_point_reached) {
+          ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Hybrid A* reached the mow-path start.");
+        } else {
+          ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) Hybrid A* navigation failed (state="
+                          << mbfClient->getState().state_ << ").");
         }
       }
+
+      // -----------------------------------------------------------------------
+      // 2) Safe-staging fallback: GlobalPlanner is NOT used to drive the final
+      //    near-obstacle approach (it goes straight in and risks a collision).
+      //    Instead find a verified-clear staging point behind the target, ferry
+      //    there with the default GlobalPlanner, then retry Hybrid A* for the
+      //    short, well-conditioned final approach.
+      // -----------------------------------------------------------------------
+      if (!first_point_reached && localConfig.staging_enabled) {
+        const double mow_yaw = 2.0 * std::atan2(startPose.pose.orientation.z, startPose.pose.orientation.w);
+        geometry_msgs::PoseStamped staging;
+        bool staging_found = false;
+        for (double d = 0.3; d <= localConfig.staging_max_radius + 1e-6; d += 0.1) {
+          geometry_msgs::PoseStamped cand = startPose;
+          cand.pose.position.x -= std::cos(mow_yaw) * d;
+          cand.pose.position.y -= std::sin(mow_yaw) * d;
+          if (checkPoseClear(cand, localConfig.staging_clearance_cost)) {
+            staging = cand;
+            staging_found = true;
+            break;
+          }
+        }
+        if (staging_found) {
+          // Only ferry if the staging point is meaningfully away from where we are.
+          const auto rp = getPose();
+          const double dx = staging.pose.position.x - rp.pose.pose.position.x;
+          const double dy = staging.pose.position.y - rp.pose.pose.position.y;
+          if (std::sqrt(dx * dx + dy * dy) > 0.3) {
+            ROS_INFO_STREAM(
+                "MowingBehavior: (FIRST POINT) ferrying to a safe staging point with GlobalPlanner "
+                "before retrying Hybrid A*.");
+            NavOutcome so = driveTo(staging, "");  // default GlobalPlanner: target is verified-clear
+            bool ret;
+            if (handleNavInterrupt(so, ret)) return ret;
+          }
+          // Retry the heading-aware final approach from the staging point.
+          NavOutcome ro = driveTo(startPose, "HybridAStarPlanner");
+          bool ret;
+          if (handleNavInterrupt(ro, ret)) return ret;
+          first_point_reached = (ro == NAV_SUCCEEDED);
+          if (first_point_reached) {
+            ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Hybrid A* reached the start after staging.");
+          }
+        } else {
+          ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) no clear staging point found within "
+                          << localConfig.staging_max_radius << " m of the target.");
+        }
+      }
+
+      const actionlib::SimpleClientGoalState current_status = mbfClient->getState();
 
       // -----------------------------------------------------------------------
       // Outcome handling
@@ -559,6 +574,39 @@ bool MowingBehavior::execute_mowing_plan() {
                                                                                        << "), retrying first point.");
             }
             continue;  // retry the first-point navigation for currentMowingPath
+          }
+
+          // ---------------------------------------------------------------
+          // Resume re-pick: re-target the nearest clear pose on the path,
+          // scanning both directions around the target, so a hard-to-approach
+          // mid-path resume point (e.g. parallel to an obstacle after a rain/
+          // battery interruption) doesn't force a blind trim. Once per path.
+          // ---------------------------------------------------------------
+          if (localConfig.resume_repick_enabled && repick_mowing_path_ != currentMowingPath) {
+            repick_mowing_path_ = currentMowingPath;
+            const int n = static_cast<int>(path.path.poses.size());
+            const int window = localConfig.resume_repick_window;
+            int best = -1;
+            for (int off = 1; off <= window && best < 0; ++off) {
+              const int fwd = currentMowingPathIndex + off;
+              const int bwd = currentMowingPathIndex - off;
+              if (fwd < n && checkPoseClear(path.path.poses[fwd], localConfig.staging_clearance_cost)) {
+                best = fwd;
+              } else if (bwd >= 0 && checkPoseClear(path.path.poses[bwd], localConfig.staging_clearance_cost)) {
+                best = bwd;
+              }
+            }
+            if (best >= 0 && best != currentMowingPathIndex) {
+              ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) re-picking nearest clear re-entry pose: index "
+                              << best << " (was " << currentMowingPathIndex << ") on path " << currentMowingPath
+                              << ".");
+              currentMowingPathIndex = best;
+              first_point_attempt_counter = 0;
+              continue;  // retry the first-point navigation at the clearer pose
+            }
+            ROS_WARN_STREAM(
+                "MowingBehavior: (FIRST POINT) no clearer re-entry pose found within window; "
+                "falling back to trimming.");
           }
 
           // Trim: remove the first pose so the robot aims at the next one

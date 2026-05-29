@@ -52,6 +52,10 @@ class MowingBehavior : public Behavior {
   // attempt one retreat per path (before falling through to the trim logic).
   int retreat_mowing_path_{-1};
 
+  // Resume re-pick: remember which path index we already re-picked a clear re-entry pose for,
+  // so we only re-pick once per path before falling through to the trim logic.
+  int repick_mowing_path_{-1};
+
  public:
   MowingBehavior();
 

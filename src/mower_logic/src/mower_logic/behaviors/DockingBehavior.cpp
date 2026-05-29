@@ -27,6 +27,7 @@ extern mower_msgs::Power getPower();
 
 extern void stopMoving();
 extern bool setGPS(bool enabled);
+extern bool checkPoseClear(const geometry_msgs::PoseStamped& pose, double max_cost);
 
 extern void registerActions(std::string prefix, const std::vector<xbot_msgs::ActionInfo>& actions);
 
@@ -52,18 +53,58 @@ bool DockingBehavior::approach_docking_point() {
   double roll, pitch, yaw;
   m.getRPY(roll, pitch, yaw);
 
+  // Clamp the approach distance so the approach point does not land inside a
+  // no-go area in front of the dock. The point is placed exactly
+  // docking_approach_distance behind the dock; if a mapped obstacle sits in that
+  // area the full distance reaches into it. Step inward toward the dock in 0.1 m
+  // decrements (down to a floor) until the footprint there is clear. This makes
+  // the exact docking_approach_distance value non-critical across maps.
+  constexpr double kApproachFloor = 0.3;  // never approach closer than this to the dock
+  double d_approach = config.docking_approach_distance;
+  {
+    auto approachAt = [&](double d) {
+      geometry_msgs::PoseStamped p = docking_pose_stamped;
+      p.pose.position.x -= cos(yaw) * d;
+      p.pose.position.y -= sin(yaw) * d;
+      return p;
+    };
+    while (d_approach > kApproachFloor && !checkPoseClear(approachAt(d_approach), config.staging_clearance_cost)) {
+      d_approach -= 0.1;
+    }
+    if (d_approach < kApproachFloor) d_approach = kApproachFloor;
+    if (d_approach < config.docking_approach_distance) {
+      ROS_WARN_STREAM("DockingBehavior: approach point at " << config.docking_approach_distance
+                                                            << " m was not clear; clamped to " << d_approach
+                                                            << " m to stay out of the obstacle in front of the dock.");
+    }
+  }
+
   // Get the approach start point
   {
     geometry_msgs::PoseStamped docking_approach_point = docking_pose_stamped;
-    docking_approach_point.pose.position.x -= cos(yaw) * config.docking_approach_distance;
-    docking_approach_point.pose.position.y -= sin(yaw) * config.docking_approach_distance;
+    docking_approach_point.pose.position.x -= cos(yaw) * d_approach;
+    docking_approach_point.pose.position.y -= sin(yaw) * d_approach;
+
+    // Route with Hybrid A* first so the drive arrives heading-aligned and routes
+    // around the front obstacle; fall back to the default GlobalPlanner only if
+    // Hybrid A* cannot plan.
     mbf_msgs::MoveBaseGoal moveBaseGoal;
     moveBaseGoal.target_pose = docking_approach_point;
     moveBaseGoal.controller = "FTCPlanner";
+    moveBaseGoal.planner = "HybridAStarPlanner";
 
     auto result = sendGoalAndWaitUnlessAborted(mbfClient, moveBaseGoal);
-    if (aborted || result.state_ != result.SUCCEEDED) {
+    if (aborted) {
       return false;
+    }
+    if (result.state_ != result.SUCCEEDED) {
+      ROS_WARN_STREAM("DockingBehavior: Hybrid A* approach failed (state="
+                      << result.state_ << "), retrying with default GlobalPlanner.");
+      moveBaseGoal.planner = "";
+      result = sendGoalAndWaitUnlessAborted(mbfClient, moveBaseGoal);
+      if (aborted || result.state_ != result.SUCCEEDED) {
+        return false;
+      }
     }
   }
 
@@ -78,7 +119,9 @@ bool DockingBehavior::approach_docking_point() {
       loop_rate.sleep();
     }
 
-    int dock_point_count = config.docking_approach_distance * 10.0;
+    // Build the straight glide-in from the (clamped) approach distance, so the
+    // glide never starts inside the obstacle.
+    int dock_point_count = d_approach * 10.0;
     for (int i = 0; i <= dock_point_count; i++) {
       geometry_msgs::PoseStamped docking_pose_stamped_front = docking_pose_stamped;
       docking_pose_stamped_front.pose.position.x -= cos(yaw) * ((dock_point_count - i) / 10.0);
