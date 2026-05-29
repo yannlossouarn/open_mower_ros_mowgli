@@ -43,10 +43,6 @@ class HybridAstarPlanner : public nav_core::BaseGlobalPlanner {
   bool runHybridAStar(const geometry_msgs::PoseStamped& start, const geometry_msgs::PoseStamped& goal,
                       std::vector<geometry_msgs::PoseStamped>& plan);
 
-  /// Straight-line interpolation fallback (also used when the search fails).
-  void straightLinePlan(const geometry_msgs::PoseStamped& start, const geometry_msgs::PoseStamped& goal,
-                        std::vector<geometry_msgs::PoseStamped>& plan);
-
   void publishPlan(const std::vector<geometry_msgs::PoseStamped>& plan);
 
   costmap_2d::Costmap2DROS* costmap_ros_ = nullptr;

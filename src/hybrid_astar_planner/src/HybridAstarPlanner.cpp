@@ -94,8 +94,12 @@ bool HybridAstarPlanner::makePlan(const geometry_msgs::PoseStamped& start, const
 
   plan.clear();
   if (!runHybridAStar(start, goal, plan)) {
-    ROS_WARN("HybridAstarPlanner: Hybrid A* failed; falling back to straight line.");
-    straightLinePlan(start, goal, plan);
+    // Fail cleanly rather than emitting an un-collision-checked straight line:
+    // as a global planner that could route a controller through an obstacle.
+    // Callers (e.g. MowingBehavior) handle planning failure with their own
+    // fallbacks (GlobalPlanner / straight-line glide-in).
+    ROS_WARN("HybridAstarPlanner: planning failed; returning no plan.");
+    return false;
   }
 
   publishPlan(plan);
@@ -221,33 +225,6 @@ bool HybridAstarPlanner::runHybridAStar(const geometry_msgs::PoseStamped& start,
   ROS_INFO_STREAM("HybridAstarPlanner: plan found — " << plan.size() << " poses (window " << width << "x" << height
                                                       << " cells, " << result.tail.size() << " analytic tail).");
   return true;
-}
-
-void HybridAstarPlanner::straightLinePlan(const geometry_msgs::PoseStamped& start,
-                                          const geometry_msgs::PoseStamped& goal,
-                                          std::vector<geometry_msgs::PoseStamped>& plan) {
-  const double dx = goal.pose.position.x - start.pose.position.x;
-  const double dy = goal.pose.position.y - start.pose.position.y;
-  const double dist = std::hypot(dx, dy);
-  const double step = std::max(costmap_->getResolution(), 0.05);
-  const int n = std::max(1, static_cast<int>(std::ceil(dist / step)));
-  const double seg_yaw = (dist > 1e-6) ? std::atan2(dy, dx) : tf2::getYaw(goal.pose.orientation);
-  tf2::Quaternion q;
-  q.setRPY(0.0, 0.0, seg_yaw);
-  const geometry_msgs::Quaternion seg_quat = tf2::toMsg(q);
-  const ros::Time now = ros::Time::now();
-
-  for (int i = 0; i <= n; ++i) {
-    const double f = static_cast<double>(i) / static_cast<double>(n);
-    geometry_msgs::PoseStamped p;
-    p.header.frame_id = global_frame_;
-    p.header.stamp = now;
-    p.pose.position.x = start.pose.position.x + f * dx;
-    p.pose.position.y = start.pose.position.y + f * dy;
-    p.pose.orientation = seg_quat;
-    plan.push_back(p);
-  }
-  if (!plan.empty()) plan.back().pose.orientation = goal.pose.orientation;
 }
 
 void HybridAstarPlanner::publishPlan(const std::vector<geometry_msgs::PoseStamped>& plan) {

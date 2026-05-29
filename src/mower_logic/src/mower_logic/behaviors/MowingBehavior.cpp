@@ -505,9 +505,15 @@ bool MowingBehavior::execute_mowing_plan() {
                           << dist_to_approach << "m, mow_yaw=" << (mow_yaw * 180.0 / M_PI) << "deg.");
 
           // -- Step 1: MoveBase to approach waypoint --------------------------------
+          // Plan the transition drive with the cost-aware, heading-aware Hybrid A*
+          // (keeps clearance from obstacles), executed by FTCPlanner. If Hybrid A*
+          // cannot plan (e.g. an unusually long transit), this MoveBase fails and
+          // the standard fallback below (MoveBase to start with the default
+          // GlobalPlanner) provides robust degradation.
           mbf_msgs::MoveBaseGoal mbGoal;
           mbGoal.target_pose = approachPose;
           mbGoal.controller = "FTCPlanner";
+          mbGoal.planner = "HybridAStarPlanner";
           mbfClient->sendGoal(mbGoal);
           sleep(1);
           ros::Rate r_ap(10);
