@@ -548,10 +548,12 @@ bool MowingBehavior::execute_mowing_plan() {
 
           if (approach_ok) {
             // -- Step 2: ExePath to align with mowing direction --
-            // Robot is now at the approach waypoint. Ask GlobalPlanner for an
-            // obstacle-aware path from here (use_start_pose=false → robot's actual
-            // TF pose) to the strip start. Falls back to straight-line if planning
-            // fails or the server is unavailable.
+            // Robot is now at the approach waypoint. Ask the Hybrid A*
+            // TransitionPlanner for a kinematically feasible, heading-aware path
+            // from here (use_start_pose=false → robot's actual TF pose) to the
+            // strip start, so it arrives aligned with the mowing direction
+            // without an in-place rotation. Falls back to the straight-line
+            // {approach, mid, start} if planning fails or the server is down.
             nav_msgs::Path align_path;
             align_path.header = startPose.header;
             align_path.poses = {approachPose, midPose, startPose};
@@ -561,7 +563,7 @@ bool MowingBehavior::execute_mowing_plan() {
               mbf_msgs::GetPathGoal getPathGoal;
               getPathGoal.use_start_pose = false;
               getPathGoal.target_pose = targetPose;
-              getPathGoal.planner = "GlobalPlanner";
+              getPathGoal.planner = "HybridAStarPlanner";
               getPathGoal.tolerance = 0.1;
               mbfClientGetPath->sendGoal(getPathGoal);
               if (mbfClientGetPath->waitForResult(ros::Duration(5.0)) &&
@@ -569,8 +571,8 @@ bool MowingBehavior::execute_mowing_plan() {
                 auto result = mbfClientGetPath->getResult();
                 if (result && !result->path.poses.empty()) {
                   align_path = result->path;
-                  ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) GlobalPlanner approach path: "
-                                  << align_path.poses.size() << " poses.");
+                  ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Hybrid A* approach path: " << align_path.poses.size()
+                                                                                            << " poses.");
                 }
               }
             }
@@ -651,8 +653,8 @@ bool MowingBehavior::execute_mowing_plan() {
               auto result = mbfClientGetPath->getResult();
               if (result && !result->path.poses.empty()) {
                 align_path = result->path;
-                ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) GlobalPlanner approach path: " << align_path.poses.size()
-                                                                                              << " poses.");
+                ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Hybrid A* approach path: " << align_path.poses.size()
+                                                                                          << " poses.");
               }
             }
           }

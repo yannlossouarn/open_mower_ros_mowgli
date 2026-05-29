@@ -1,6 +1,17 @@
 planners:
   - name: GlobalPlanner
     type: global_planner/GlobalPlanner
+  - name: HybridAStarPlanner
+    type: hybrid_astar_planner/HybridAstarPlanner
+
+# Hybrid A* TransitionPlanner tuning. Used by MowingBehavior (get_path) to plan
+# the heading-aware glide-in from the approach waypoint to the mow-strip start.
+# step_size is kept ~= 0.5*R so the per-primitive turn angle stays ~29 deg.
+# weight_costmap biases the search toward clearance (inflation) over length.
+HybridAStarPlanner:
+  min_turning_radius: 0.24
+  step_size: 0.12
+  weight_costmap: 8.0
 
 controllers:
   - name: FTCPlanner
