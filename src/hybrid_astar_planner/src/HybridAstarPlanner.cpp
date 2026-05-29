@@ -1,22 +1,31 @@
 // hybrid_astar_planner — Hybrid A* global planner plugin for move_base_flex.
 //
 // This file is part of OpenMower and is distributed under the GNU GPLv3.
-// The Hybrid A* search core (ported in later phases) derives from Karl Kurzer's
-// path_planner, BSD-3-Clause, Copyright (c) 2017 Karl Kurzer.
+// The Hybrid A* search core derives from Karl Kurzer's path_planner,
+// BSD-3-Clause, Copyright (c) 2017 Karl Kurzer; see LICENSE.Kurzer.
 //
 #include "hybrid_astar_planner/HybridAstarPlanner.h"
 
+#include <costmap_2d/cost_values.h>
 #include <nav_msgs/Path.h>
 #include <pluginlib/class_list_macros.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/utils.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
+#include <algorithm>
 #include <cmath>
+#include <memory>
 
-// Register this planner as a nav_core::BaseGlobalPlanner plugin.
+#include "hybrid_astar_planner/HybridAStar.h"
+
 PLUGINLIB_EXPORT_CLASS(hybrid_astar_planner::HybridAstarPlanner, nav_core::BaseGlobalPlanner)
 
 namespace hybrid_astar_planner {
+
+namespace {
+constexpr long kMaxNodes3D = 3000000;  // ~150 MB of Node3D; guard against OOM on the Pi
+}
 
 HybridAstarPlanner::HybridAstarPlanner() = default;
 
@@ -34,13 +43,26 @@ void HybridAstarPlanner::initialize(std::string name, costmap_2d::Costmap2DROS* 
   costmap_ = costmap_ros_->getCostmap();
   global_frame_ = costmap_ros_->getGlobalFrameID();
 
-  ros::NodeHandle private_nh("~/" + name);
-  plan_pub_ = private_nh.advertise<nav_msgs::Path>("plan", 1);
+  ros::NodeHandle pnh("~/" + name);
+  pnh.param("min_turning_radius", params_.min_turning_radius, params_.min_turning_radius);
+  pnh.param("step_size", params_.step_size, params_.step_size);
+  pnh.param("headings", params_.headings, params_.headings);
+  pnh.param("max_iterations", params_.max_iterations, params_.max_iterations);
+  pnh.param("max_planning_time", params_.max_planning_time, params_.max_planning_time);
+  pnh.param("penalty_turning", params_.penalty_turning, params_.penalty_turning);
+  pnh.param("dubins_shot", params_.dubins_shot, params_.dubins_shot);
+  pnh.param("dubins_shot_range", params_.dubins_shot_range, params_.dubins_shot_range);
+  pnh.param("dubins_step_size", params_.dubins_step_size, params_.dubins_step_size);
+  pnh.param("analytic_expansion_interval", params_.analytic_expansion_interval, params_.analytic_expansion_interval);
+  pnh.param("window_margin", params_.window_margin, params_.window_margin);
+
+  plan_pub_ = pnh.advertise<nav_msgs::Path>("plan", 1);
 
   initialized_ = true;
   ROS_INFO_STREAM("HybridAstarPlanner: initialized (frame="
                   << global_frame_ << ", " << costmap_->getSizeInCellsX() << "x" << costmap_->getSizeInCellsY()
-                  << " cells, res=" << costmap_->getResolution() << "m). Phase A skeleton: straight-line plans.");
+                  << " cells, res=" << costmap_->getResolution() << "m, R=" << params_.min_turning_radius
+                  << "m, step=" << params_.step_size << "m, headings=" << params_.headings << ").");
 }
 
 bool HybridAstarPlanner::makePlan(const geometry_msgs::PoseStamped& start, const geometry_msgs::PoseStamped& goal,
@@ -51,47 +73,161 @@ bool HybridAstarPlanner::makePlan(const geometry_msgs::PoseStamped& start, const
   }
 
   plan.clear();
+  if (!runHybridAStar(start, goal, plan)) {
+    ROS_WARN("HybridAstarPlanner: Hybrid A* failed; falling back to straight line.");
+    straightLinePlan(start, goal, plan);
+  }
 
-  // ---------------------------------------------------------------------------
-  // Phase A stub: straight-line interpolation from start to goal, with the
-  // heading at every sample pointing along the segment (so the consumer/FTC
-  // sees a sensible orientation). Phase B replaces this with the Hybrid A*
-  // search over a cropped costmap window. The MBF/pluginlib/costmap plumbing
-  // exercised here is identical to what the real planner will use.
-  // ---------------------------------------------------------------------------
+  publishPlan(plan);
+  return !plan.empty();
+}
+
+bool HybridAstarPlanner::runHybridAStar(const geometry_msgs::PoseStamped& start, const geometry_msgs::PoseStamped& goal,
+                                        std::vector<geometry_msgs::PoseStamped>& plan) {
+  boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock(*(costmap_->getMutex()));
+
+  const double res = costmap_->getResolution();
+  const double ox_w = costmap_->getOriginX();
+  const double oy_w = costmap_->getOriginY();
+
+  // World -> absolute costmap cells.
+  unsigned int sx, sy, gx, gy;
+  if (!costmap_->worldToMap(start.pose.position.x, start.pose.position.y, sx, sy) ||
+      !costmap_->worldToMap(goal.pose.position.x, goal.pose.position.y, gx, gy)) {
+    ROS_WARN("HybridAstarPlanner: start or goal is outside the costmap.");
+    return false;
+  }
+
+  // Cropped window: bounding box of start/goal + margin, clamped to the map.
+  const int margin = std::max(1, static_cast<int>(std::ceil(params_.window_margin / res)));
+  const int sizeX = static_cast<int>(costmap_->getSizeInCellsX());
+  const int sizeY = static_cast<int>(costmap_->getSizeInCellsY());
+  const int minx = std::max(0, static_cast<int>(std::min(sx, gx)) - margin);
+  const int miny = std::max(0, static_cast<int>(std::min(sy, gy)) - margin);
+  const int maxx = std::min(sizeX - 1, static_cast<int>(std::max(sx, gx)) + margin);
+  const int maxy = std::min(sizeY - 1, static_cast<int>(std::max(sy, gy)) + margin);
+  const int width = maxx - minx + 1;
+  const int height = maxy - miny + 1;
+  if (width < 2 || height < 2) {
+    ROS_WARN("HybridAstarPlanner: degenerate planning window (%dx%d).", width, height);
+    return false;
+  }
+
+  const long n3d = static_cast<long>(width) * height * params_.headings;
+  if (n3d > kMaxNodes3D) {
+    ROS_WARN("HybridAstarPlanner: window too large (%ld 3D nodes > %ld cap); falling back.", n3d, kMaxNodes3D);
+    return false;
+  }
+
+  // Window-relative continuous cell coordinates.
+  auto toWindowCell = [&](double wx, double wy, float& cx, float& cy) {
+    cx = static_cast<float>((wx - ox_w) / res - minx);
+    cy = static_cast<float>((wy - oy_w) / res - miny);
+  };
+  float scx, scy, gcx, gcy;
+  toWindowCell(start.pose.position.x, start.pose.position.y, scx, scy);
+  toWindowCell(goal.pose.position.x, goal.pose.position.y, gcx, gcy);
+
+  Node3D startNode(scx, scy, normalizeHeadingRad(static_cast<float>(tf2::getYaw(start.pose.orientation))), 0, 0,
+                   nullptr);
+  Node3D goalNode(gcx, gcy, normalizeHeadingRad(static_cast<float>(tf2::getYaw(goal.pose.orientation))), 0, 0, nullptr);
+
+  const Primitives prims = makePrimitives(params_, res);
+  CollisionChecker cc(costmap_, costmap_ros_->getRobotFootprint(), minx, miny, width, height);
+
+  // Fast goal-feasibility precheck: if the robot footprint at the goal pose is
+  // in collision (a common case for obstacle-adjacent mow-strip starts), no
+  // plan can terminate there — fail fast rather than exhausting the search.
+  Node3D goalProbe(gcx, gcy, normalizeHeadingRad(static_cast<float>(tf2::getYaw(goal.pose.orientation))), 0, 0,
+                   nullptr);
+  if (!cc.isTraversable(&goalProbe)) {
+    ROS_WARN("HybridAstarPlanner: goal pose footprint is in collision; cannot plan to it.");
+    return false;
+  }
+
+  std::unique_ptr<Node3D[]> nodes3D(new Node3D[n3d]());
+  std::unique_ptr<Node2D[]> nodes2D(new Node2D[static_cast<long>(width) * height]());
+
+  const PlanResult result =
+      hybridAStar(startNode, goalNode, nodes3D.get(), nodes2D.get(), width, height, params_, prims, res, cc);
+
+  if (!result.node) {
+    return false;
+  }
+  if (!result.found) {
+    ROS_WARN("HybridAstarPlanner: search exhausted without reaching the goal.");
+    return false;
+  }
+
+  // Backtrace the search chain (goal-side node back to start), then reverse.
+  // Guard against a predecessor cycle (the same-cell rewire can, in rare
+  // geometries, produce a loop) so we never spin here.
+  std::vector<std::array<float, 3>> cells;  // (x, y, theta) in window cells, start..node
+  const size_t maxChain = static_cast<size_t>(n3d) + 16;
+  size_t guard = 0;
+  for (const Node3D* n = result.node; n != nullptr && guard < maxChain; n = n->getPred(), ++guard) {
+    cells.push_back({n->getX(), n->getY(), n->getT()});
+  }
+  if (guard >= maxChain) {
+    ROS_WARN("HybridAstarPlanner: predecessor chain exceeded bound (cycle?); discarding plan.");
+    return false;
+  }
+  std::reverse(cells.begin(), cells.end());
+  // Append the analytic Dubins tail (already start-exclusive..goal order).
+  for (const auto& c : result.tail) cells.push_back(c);
+
+  // Window cells -> world poses.
+  const ros::Time now = ros::Time::now();
+  plan.reserve(cells.size() + 1);
+  for (const auto& c : cells) {
+    geometry_msgs::PoseStamped p;
+    p.header.frame_id = global_frame_;
+    p.header.stamp = now;
+    p.pose.position.x = ox_w + (minx + c[0] + 0.5) * res;
+    p.pose.position.y = oy_w + (miny + c[1] + 0.5) * res;
+    p.pose.position.z = 0.0;
+    tf2::Quaternion q;
+    q.setRPY(0.0, 0.0, c[2]);
+    p.pose.orientation = tf2::toMsg(q);
+    plan.push_back(p);
+  }
+
+  // Ensure the path terminates exactly at the requested goal pose.
+  geometry_msgs::PoseStamped goal_stamped = goal;
+  goal_stamped.header.frame_id = global_frame_;
+  goal_stamped.header.stamp = now;
+  plan.push_back(goal_stamped);
+
+  ROS_INFO_STREAM("HybridAstarPlanner: plan found — " << plan.size() << " poses (window " << width << "x" << height
+                                                      << " cells, " << result.tail.size() << " analytic tail).");
+  return true;
+}
+
+void HybridAstarPlanner::straightLinePlan(const geometry_msgs::PoseStamped& start,
+                                          const geometry_msgs::PoseStamped& goal,
+                                          std::vector<geometry_msgs::PoseStamped>& plan) {
   const double dx = goal.pose.position.x - start.pose.position.x;
   const double dy = goal.pose.position.y - start.pose.position.y;
   const double dist = std::hypot(dx, dy);
-
   const double step = std::max(costmap_->getResolution(), 0.05);
   const int n = std::max(1, static_cast<int>(std::ceil(dist / step)));
-
   const double seg_yaw = (dist > 1e-6) ? std::atan2(dy, dx) : tf2::getYaw(goal.pose.orientation);
   tf2::Quaternion q;
   q.setRPY(0.0, 0.0, seg_yaw);
   const geometry_msgs::Quaternion seg_quat = tf2::toMsg(q);
+  const ros::Time now = ros::Time::now();
 
   for (int i = 0; i <= n; ++i) {
     const double f = static_cast<double>(i) / static_cast<double>(n);
     geometry_msgs::PoseStamped p;
     p.header.frame_id = global_frame_;
-    p.header.stamp = ros::Time::now();
+    p.header.stamp = now;
     p.pose.position.x = start.pose.position.x + f * dx;
     p.pose.position.y = start.pose.position.y + f * dy;
-    p.pose.position.z = 0.0;
     p.pose.orientation = seg_quat;
     plan.push_back(p);
   }
-
-  // Make the final pose carry the requested goal orientation.
-  if (!plan.empty()) {
-    plan.back().pose.orientation = goal.pose.orientation;
-  }
-
-  publishPlan(plan);
-  ROS_INFO_STREAM("HybridAstarPlanner: (Phase A) straight-line plan with " << plan.size() << " poses over " << dist
-                                                                           << "m.");
-  return true;
+  if (!plan.empty()) plan.back().pose.orientation = goal.pose.orientation;
 }
 
 void HybridAstarPlanner::publishPlan(const std::vector<geometry_msgs::PoseStamped>& plan) {

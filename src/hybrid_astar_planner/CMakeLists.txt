@@ -7,6 +7,7 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   nav_core
   costmap_2d
+  base_local_planner
   pluginlib
   geometry_msgs
   nav_msgs
@@ -16,10 +17,9 @@ find_package(catkin REQUIRED COMPONENTS
   angles
 )
 
-# NOTE: OMPL (Dubins/Reeds-Shepp heuristics) is declared as a dependency in
-# package.xml and will be wired into this CMakeLists in Phase B, when the
-# Hybrid A* core that uses it is ported. Phase A (plugin skeleton) does not
-# need it, keeping the initial build minimal.
+# OMPL provides the Dubins state space used for the constrained heuristic and
+# the analytic (Dubins shot) expansion.
+find_package(ompl REQUIRED)
 
 catkin_package(
   INCLUDE_DIRS include
@@ -28,6 +28,7 @@ catkin_package(
     roscpp
     nav_core
     costmap_2d
+    base_local_planner
     pluginlib
     geometry_msgs
     nav_msgs
@@ -40,14 +41,19 @@ catkin_package(
 include_directories(
   include
   ${catkin_INCLUDE_DIRS}
+  ${OMPL_INCLUDE_DIRS}
 )
 
 add_library(${PROJECT_NAME}
   src/HybridAstarPlanner.cpp
+  src/HybridAStar.cpp
+  src/CollisionChecker.cpp
+  src/Node.cpp
 )
 
 target_link_libraries(${PROJECT_NAME}
   ${catkin_LIBRARIES}
+  ${OMPL_LIBRARIES}
 )
 
 install(TARGETS ${PROJECT_NAME}
