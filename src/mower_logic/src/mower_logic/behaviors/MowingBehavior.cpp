@@ -352,18 +352,17 @@ bool MowingBehavior::execute_mowing_plan() {
     /////////////////////////////////////////////////////////////////////////////////////////////////////////
     // DRIVE TO THE FIRST POINT OF THE MOW PATH
     //
-    // Three strategies (tried in order, falling back to the next if the current one fails):
+    // Two strategies, tried in order:
     //
-    //  2b) use_teb_for_transition=true  → single MoveBaseGoal with "TransitionPlanner" (TEB).
-    //      TEB generates a footprint-aware curved trajectory that arrives with the correct
-    //      orientation; no in-place rotation near obstacles.
+    //  1) Hybrid A* (TransitionPlanner): MoveBaseGoal to the mow-path start with
+    //     planner="HybridAStarPlanner", controller="FTCPlanner". Hybrid A* plans a
+    //     kinematically feasible, heading-aware path that arrives at the start
+    //     already aligned with the mowing direction (no in-place rotation) and
+    //     keeps clearance from obstacles.
     //
-    //  2a) approach_enabled=true (default, FTC-based)
-    //      → navigate to an approach waypoint (approach_distance m behind start along the mowing
-    //        direction) with MoveBase, then execute a short ExePath to the actual start.
-    //        The robot arrives at start already aligned → POST_ROTATE at start ≈ 0°.
-    //
-    //  fallback) standard single MoveBaseGoal to start point with FTCPlanner (original behaviour).
+    //  fallback) MoveBaseGoal to the start with the default GlobalPlanner +
+    //     FTCPlanner, for the rare case Hybrid A* cannot plan (e.g. a very long
+    //     transit that exceeds its windowed search).
     //
     // After max_first_point_attempts failures the retreat recovery (Phase 3) is tried once:
     // the robot navigates back to the start of the previous path to escape the obstacle zone.
@@ -382,344 +381,65 @@ bool MowingBehavior::execute_mowing_plan() {
       bool first_point_reached = false;
 
       // -----------------------------------------------------------------------
-      // Helper lambda: run the MBF MoveBase wait-loop.
-      // Handles skip_area / skip_path / abort / pause the same way as before.
-      // Sets `reached` to true on SUCCEEDED; returns false if we must immediately
-      // return from execute_mowing_plan().
+      // Drive to the mow-path start with the Hybrid A* planner: it produces a
+      // kinematically feasible, heading-aware path that ARRIVES at the start
+      // already aligned with the mowing direction (no in-place rotation) and
+      // keeps clearance from obstacles. FTCPlanner executes it. If Hybrid A*
+      // cannot plan (e.g. an unusually long transit) the MoveBase fails and the
+      // fallback below (default GlobalPlanner) provides robust degradation.
       // -----------------------------------------------------------------------
-      // (Implemented inline for both approach and fallback paths below.)
-
-      // -----------------------------------------------------------------------
-      // Phase 2b: TEB transition planner
-      // Navigate to the approach waypoint (approach_distance m behind strip
-      // start) with TEB so the robot arrives already aligned and clear of
-      // obstacles.  Phase 2a then does the final short glide-in with FTC.
-      // Sending TEB to the strip start itself is infeasible when the start is
-      // obstacle-adjacent (TEB's min_obstacle_dist prevents it from reaching
-      // that point).
-      // -----------------------------------------------------------------------
-      if (localConfig.use_teb_for_transition && localConfig.approach_enabled) {
-        tf2::Quaternion q_start(startPose.pose.orientation.x, startPose.pose.orientation.y,
-                                startPose.pose.orientation.z, startPose.pose.orientation.w);
-        double mow_yaw = 2.0 * std::atan2(q_start.z(), q_start.w());
-
-        geometry_msgs::PoseStamped approachPose;
-        approachPose.header = startPose.header;
-        approachPose.pose.position.x = startPose.pose.position.x - localConfig.approach_distance * std::cos(mow_yaw);
-        approachPose.pose.position.y = startPose.pose.position.y - localConfig.approach_distance * std::sin(mow_yaw);
-        approachPose.pose.position.z = 0.0;
-        approachPose.pose.orientation = startPose.pose.orientation;
-
-        auto robotPose = getPose();
-        double dx = approachPose.pose.position.x - robotPose.pose.pose.position.x;
-        double dy = approachPose.pose.position.y - robotPose.pose.pose.position.y;
-        double dist_to_approach = std::sqrt(dx * dx + dy * dy);
-
-        if (dist_to_approach > localConfig.approach_min_distance) {
-          ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Using TEB TransitionPlanner to approach waypoint (dist="
-                          << dist_to_approach << "m).");
-          mbf_msgs::MoveBaseGoal mbGoal;
-          mbGoal.target_pose = approachPose;
-          mbGoal.controller = "TransitionPlanner";
-          mbfClient->sendGoal(mbGoal);
-          sleep(1);
-          ros::Rate r_teb(10);
-          while (ros::ok()) {
-            auto st = mbfClient->getState();
-            if (st.state_ == actionlib::SimpleClientGoalState::ACTIVE ||
-                st.state_ == actionlib::SimpleClientGoalState::PENDING) {
-              if (skip_area) {
-                mbfClient->cancelAllGoals();
-                mowerEnabled = false;
-                currentMowingPaths.clear();
-                skip_area = false;
-                return true;
-              }
-              if (skip_path) {
-                skip_path = false;
-                currentMowingPath++;
-                currentMowingPathIndex = 0;
-                return false;
-              }
-              if (aborted) {
-                mbfClient->cancelAllGoals();
-                mowerEnabled = false;
-                return false;
-              }
-              if (requested_pause_flag) {
-                mbfClient->cancelAllGoals();
-                mowerEnabled = false;
-                return false;
-              }
-            } else {
-              break;
+      {
+        mbf_msgs::MoveBaseGoal mbGoal;
+        mbGoal.target_pose = startPose;
+        mbGoal.controller = "FTCPlanner";
+        mbGoal.planner = "HybridAStarPlanner";
+        mbfClient->sendGoal(mbGoal);
+        sleep(1);
+        ros::Rate r_ha(10);
+        while (ros::ok()) {
+          auto st = mbfClient->getState();
+          if (st.state_ == actionlib::SimpleClientGoalState::ACTIVE ||
+              st.state_ == actionlib::SimpleClientGoalState::PENDING) {
+            if (skip_area) {
+              mbfClient->cancelAllGoals();
+              mowerEnabled = false;
+              currentMowingPaths.clear();
+              skip_area = false;
+              return true;
             }
-            r_teb.sleep();
-          }
-          if (mbfClient->getState().state_ == actionlib::SimpleClientGoalState::SUCCEEDED) {
-            ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) TEB TransitionPlanner reached approach waypoint.");
+            if (skip_path) {
+              skip_path = false;
+              currentMowingPath++;
+              currentMowingPathIndex = 0;
+              return false;
+            }
+            if (aborted) {
+              mbfClient->cancelAllGoals();
+              mowerEnabled = false;
+              return false;
+            }
+            if (requested_pause_flag) {
+              mbfClient->cancelAllGoals();
+              mowerEnabled = false;
+              return false;
+            }
           } else {
-            ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) TEB TransitionPlanner failed (state="
-                            << mbfClient->getState().state_ << "), proceeding to FTC approach.");
+            break;
           }
+          r_ha.sleep();
+        }
+        if (mbfClient->getState().state_ == actionlib::SimpleClientGoalState::SUCCEEDED) {
+          first_point_reached = true;
+          ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Hybrid A* reached the mow-path start.");
         } else {
-          ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Already near approach waypoint (dist="
-                          << dist_to_approach << "m), skipping TEB transit.");
+          ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) Hybrid A* navigation failed (state="
+                          << mbfClient->getState().state_ << "), falling back to GlobalPlanner.");
         }
       }
 
       // -----------------------------------------------------------------------
-      // Phase 2a: approach-waypoint strategy (FTC-based)
-      // Runs after TEB transit (use_teb_for_transition=true) or standalone.
-      // -----------------------------------------------------------------------
-      if (!first_point_reached && localConfig.approach_enabled) {
-        // Extract mowing direction from the start pose orientation.
-        tf2::Quaternion q_start(startPose.pose.orientation.x, startPose.pose.orientation.y,
-                                startPose.pose.orientation.z, startPose.pose.orientation.w);
-        double mow_yaw = 2.0 * std::atan2(q_start.z(), q_start.w());
-
-        // Place the approach waypoint approach_distance m behind start along the mowing direction.
-        geometry_msgs::PoseStamped approachPose;
-        approachPose.header = startPose.header;
-        approachPose.pose.position.x = startPose.pose.position.x - localConfig.approach_distance * std::cos(mow_yaw);
-        approachPose.pose.position.y = startPose.pose.position.y - localConfig.approach_distance * std::sin(mow_yaw);
-        approachPose.pose.position.z = 0.0;
-        approachPose.pose.orientation = startPose.pose.orientation;  // same heading as mowing strip
-
-        // Midpoint between approach and start (needed so ExePath has ≥ 3 poses for FTC).
-        geometry_msgs::PoseStamped midPose;
-        midPose.header = startPose.header;
-        midPose.pose.position.x = (approachPose.pose.position.x + startPose.pose.position.x) * 0.5;
-        midPose.pose.position.y = (approachPose.pose.position.y + startPose.pose.position.y) * 0.5;
-        midPose.pose.position.z = 0.0;
-        midPose.pose.orientation = startPose.pose.orientation;
-
-        // Skip the approach if the robot is already closer than approach_min_distance to it.
-        auto robotPose = getPose();
-        double dx = approachPose.pose.position.x - robotPose.pose.pose.position.x;
-        double dy = approachPose.pose.position.y - robotPose.pose.pose.position.y;
-        double dist_to_approach = std::sqrt(dx * dx + dy * dy);
-
-        if (dist_to_approach > localConfig.approach_min_distance) {
-          ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Approach waypoint at dist="
-                          << dist_to_approach << "m, mow_yaw=" << (mow_yaw * 180.0 / M_PI) << "deg.");
-
-          // -- Step 1: MoveBase to approach waypoint --------------------------------
-          // Plan the transition drive with the cost-aware, heading-aware Hybrid A*
-          // (keeps clearance from obstacles), executed by FTCPlanner. If Hybrid A*
-          // cannot plan (e.g. an unusually long transit), this MoveBase fails and
-          // the standard fallback below (MoveBase to start with the default
-          // GlobalPlanner) provides robust degradation.
-          mbf_msgs::MoveBaseGoal mbGoal;
-          mbGoal.target_pose = approachPose;
-          mbGoal.controller = "FTCPlanner";
-          mbGoal.planner = "HybridAStarPlanner";
-          mbfClient->sendGoal(mbGoal);
-          sleep(1);
-          ros::Rate r_ap(10);
-          bool approach_ok = false;
-          while (ros::ok()) {
-            auto st = mbfClient->getState();
-            if (st.state_ == actionlib::SimpleClientGoalState::ACTIVE ||
-                st.state_ == actionlib::SimpleClientGoalState::PENDING) {
-              if (skip_area) {
-                mbfClient->cancelAllGoals();
-                mowerEnabled = false;
-                currentMowingPaths.clear();
-                skip_area = false;
-                return true;
-              }
-              if (skip_path) {
-                skip_path = false;
-                currentMowingPath++;
-                currentMowingPathIndex = 0;
-                return false;
-              }
-              if (aborted) {
-                mbfClient->cancelAllGoals();
-                mowerEnabled = false;
-                return false;
-              }
-              if (requested_pause_flag) {
-                mbfClient->cancelAllGoals();
-                mowerEnabled = false;
-                return false;
-              }
-            } else {
-              break;
-            }
-            r_ap.sleep();
-          }
-          approach_ok = (mbfClient->getState().state_ == actionlib::SimpleClientGoalState::SUCCEEDED);
-
-          if (approach_ok) {
-            // -- Step 2: ExePath to align with mowing direction --
-            // Robot is now at the approach waypoint. Ask the Hybrid A*
-            // TransitionPlanner for a kinematically feasible, heading-aware path
-            // from here (use_start_pose=false → robot's actual TF pose) to the
-            // strip start, so it arrives aligned with the mowing direction
-            // without an in-place rotation. Falls back to the straight-line
-            // {approach, mid, start} if planning fails or the server is down.
-            nav_msgs::Path align_path;
-            align_path.header = startPose.header;
-            align_path.poses = {approachPose, midPose, startPose};
-            if (mbfClientGetPath->isServerConnected()) {
-              geometry_msgs::PoseStamped targetPose = startPose;
-              targetPose.header.stamp = ros::Time(0);
-              mbf_msgs::GetPathGoal getPathGoal;
-              getPathGoal.use_start_pose = false;
-              getPathGoal.target_pose = targetPose;
-              getPathGoal.planner = "HybridAStarPlanner";
-              getPathGoal.tolerance = 0.1;
-              mbfClientGetPath->sendGoal(getPathGoal);
-              if (mbfClientGetPath->waitForResult(ros::Duration(5.0)) &&
-                  mbfClientGetPath->getState() == actionlib::SimpleClientGoalState::SUCCEEDED) {
-                auto result = mbfClientGetPath->getResult();
-                if (result && !result->path.poses.empty()) {
-                  align_path = result->path;
-                  ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Hybrid A* approach path: " << align_path.poses.size()
-                                                                                            << " poses.");
-                }
-              }
-            }
-
-            mbf_msgs::ExePathGoal exeGoal;
-            exeGoal.path = align_path;
-            exeGoal.angle_tolerance = 0.1;  // ~6°
-            exeGoal.dist_tolerance = 0.15;
-            exeGoal.tolerance_from_action = true;
-            exeGoal.controller = "FTCPlanner";
-            mbfClientExePath->sendGoal(exeGoal);
-            sleep(1);
-            ros::Rate r_exe(10);
-            while (ros::ok()) {
-              auto st = mbfClientExePath->getState();
-              if (st.state_ == actionlib::SimpleClientGoalState::ACTIVE ||
-                  st.state_ == actionlib::SimpleClientGoalState::PENDING) {
-                if (skip_area) {
-                  mbfClientExePath->cancelAllGoals();
-                  mowerEnabled = false;
-                  currentMowingPaths.clear();
-                  skip_area = false;
-                  return true;
-                }
-                if (skip_path) {
-                  skip_path = false;
-                  currentMowingPath++;
-                  currentMowingPathIndex = 0;
-                  return false;
-                }
-                if (aborted) {
-                  mbfClientExePath->cancelAllGoals();
-                  mowerEnabled = false;
-                  return false;
-                }
-                if (requested_pause_flag) {
-                  mbfClientExePath->cancelAllGoals();
-                  mowerEnabled = false;
-                  return false;
-                }
-              } else {
-                break;
-              }
-              r_exe.sleep();
-            }
-            auto exe_state = mbfClientExePath->getState().state_;
-            if (exe_state == actionlib::SimpleClientGoalState::SUCCEEDED ||
-                exe_state == actionlib::SimpleClientGoalState::PREEMPTED) {
-              first_point_reached = true;
-              ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Approach path succeeded.");
-            } else {
-              ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) Approach ExePath failed (state="
-                              << exe_state << "), falling back to standard navigation.");
-            }
-          } else {
-            ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) Approach MoveBase failed (state="
-                            << mbfClient->getState().state_ << "), falling back to standard navigation.");
-          }
-        } else {
-          // Robot is already at the approach waypoint.
-          // Skip the MoveBase step but still run ExePath to glide into the strip start.
-          ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Already at approach point ("
-                          << dist_to_approach << "m), running ExePath to strip start.");
-          nav_msgs::Path align_path;
-          align_path.header = startPose.header;
-          align_path.poses = {approachPose, midPose, startPose};
-          if (mbfClientGetPath->isServerConnected()) {
-            geometry_msgs::PoseStamped targetPose = startPose;
-            targetPose.header.stamp = ros::Time(0);
-            mbf_msgs::GetPathGoal getPathGoal;
-            getPathGoal.use_start_pose = false;
-            getPathGoal.target_pose = targetPose;
-            getPathGoal.planner = "GlobalPlanner";
-            getPathGoal.tolerance = 0.1;
-            mbfClientGetPath->sendGoal(getPathGoal);
-            if (mbfClientGetPath->waitForResult(ros::Duration(5.0)) &&
-                mbfClientGetPath->getState() == actionlib::SimpleClientGoalState::SUCCEEDED) {
-              auto result = mbfClientGetPath->getResult();
-              if (result && !result->path.poses.empty()) {
-                align_path = result->path;
-                ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Hybrid A* approach path: " << align_path.poses.size()
-                                                                                          << " poses.");
-              }
-            }
-          }
-
-          mbf_msgs::ExePathGoal exeGoal;
-          exeGoal.path = align_path;
-          exeGoal.angle_tolerance = 0.1;
-          exeGoal.dist_tolerance = 0.15;
-          exeGoal.tolerance_from_action = true;
-          exeGoal.controller = "FTCPlanner";
-          mbfClientExePath->sendGoal(exeGoal);
-          sleep(1);
-          ros::Rate r_exe2(10);
-          while (ros::ok()) {
-            auto st = mbfClientExePath->getState();
-            if (st.state_ == actionlib::SimpleClientGoalState::ACTIVE ||
-                st.state_ == actionlib::SimpleClientGoalState::PENDING) {
-              if (skip_area) {
-                mbfClientExePath->cancelAllGoals();
-                mowerEnabled = false;
-                currentMowingPaths.clear();
-                skip_area = false;
-                return true;
-              }
-              if (skip_path) {
-                skip_path = false;
-                currentMowingPath++;
-                currentMowingPathIndex = 0;
-                return false;
-              }
-              if (aborted) {
-                mbfClientExePath->cancelAllGoals();
-                mowerEnabled = false;
-                return false;
-              }
-              if (requested_pause_flag) {
-                mbfClientExePath->cancelAllGoals();
-                mowerEnabled = false;
-                return false;
-              }
-            } else {
-              break;
-            }
-            r_exe2.sleep();
-          }
-          auto exe_state2 = mbfClientExePath->getState().state_;
-          if (exe_state2 == actionlib::SimpleClientGoalState::SUCCEEDED ||
-              exe_state2 == actionlib::SimpleClientGoalState::PREEMPTED) {
-            first_point_reached = true;
-            ROS_INFO_STREAM("MowingBehavior: (FIRST POINT) Approach path succeeded.");
-          } else {
-            ROS_WARN_STREAM("MowingBehavior: (FIRST POINT) Approach ExePath failed (state="
-                            << exe_state2 << "), falling back to standard navigation.");
-          }
-        }
-      }
-
-      // -----------------------------------------------------------------------
-      // Fallback: original MoveBase to start point with FTCPlanner
+      // Fallback: MoveBase to the start with the default planner (GlobalPlanner)
+      // + FTCPlanner, used only if Hybrid A* above could not plan.
       // -----------------------------------------------------------------------
       actionlib::SimpleClientGoalState current_status(actionlib::SimpleClientGoalState::PENDING);
       if (!first_point_reached) {

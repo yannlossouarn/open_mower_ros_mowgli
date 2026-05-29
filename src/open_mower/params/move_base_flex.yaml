@@ -4,8 +4,8 @@ planners:
   - name: HybridAStarPlanner
     type: hybrid_astar_planner/HybridAstarPlanner
 
-# Hybrid A* TransitionPlanner tuning. Used by MowingBehavior (get_path) to plan
-# the heading-aware glide-in from the approach waypoint to the mow-strip start.
+# Hybrid A* TransitionPlanner tuning. MowingBehavior uses it (planner=
+# "HybridAStarPlanner") to plan the heading-aware drive to each mow-path start.
 # step_size is kept ~= 0.5*R so the per-primitive turn angle stays ~29 deg.
 # weight_costmap biases the search toward clearance (inflation) over length.
 HybridAStarPlanner:
@@ -18,8 +18,6 @@ controllers:
     type: ftc_local_planner/FTCPlanner
   - name: DockingFTCPlanner
     type: ftc_local_planner/FTCPlanner
-  - name: TransitionPlanner
-    type: teb_local_planner/TebLocalPlannerROS
 
 recovery_behaviors:
   - name: BackwardForwardRecovery
