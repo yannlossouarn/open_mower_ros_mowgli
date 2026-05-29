@@ -196,6 +196,13 @@ MapData map_data;
 bool show_fake_obstacle = false;
 geometry_msgs::Pose fake_obstacle_pose;
 
+// Box-blur kernel (cells) applied to the navigation area when building the map.
+// It turns the hard mow-area boundary into an "expensive but drivable" gradient.
+// Must be >= the robot half-width in cells so the body can sit near the boundary
+// (e.g. mowing outlines) without the footprint hitting hard-lethal. 9 cells @
+// 0.05 m ~= 0.45 m soft band. Overridable via the ~navigation_area_blur param.
+int navigation_area_blur = 9;
+
 // The grid map. This is built from the polygons loaded from the file.
 grid_map::GridMap map;
 
@@ -561,7 +568,7 @@ void buildMap() {
   cv::Mat cv_map;
   grid_map::GridMapCvConverter::toImage<unsigned char, 1>(map, "navigation_area", CV_8UC1, cv_map);
 
-  cv::blur(cv_map, cv_map, cv::Size(5, 5));
+  cv::blur(cv_map, cv_map, cv::Size(navigation_area_blur, navigation_area_blur));
 
   grid_map::GridMapCvConverter::addLayerFromImage<unsigned char, 1>(cv_map, "navigation_area", map);
 
@@ -872,6 +879,14 @@ void convertLegacyMapToJson() {
 int main(int argc, char** argv) {
   ros::init(argc, argv, "mower_map_service");
   ros::NodeHandle n;
+
+  // Width (cells) of the soft boundary gradient around mow/nav areas. Widen it
+  // so the robot body can sit near the boundary without the footprint hitting
+  // hard-lethal (see navigation_area_blur). Forced odd for a symmetric kernel.
+  ros::NodeHandle paramNh("~");
+  paramNh.param("navigation_area_blur", navigation_area_blur, navigation_area_blur);
+  if (navigation_area_blur < 1) navigation_area_blur = 1;
+  if (navigation_area_blur % 2 == 0) navigation_area_blur++;
   json_map_pub = n.advertise<std_msgs::String>("mower_map_service/json_map", 1, true);
   map_pub = n.advertise<nav_msgs::OccupancyGrid>("mower_map_service/map", 10, true);
   map_server_viz_array_pub = n.advertise<visualization_msgs::MarkerArray>("mower_map_service/map_viz", 10, true);
