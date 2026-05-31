@@ -85,6 +85,7 @@
         <param name="xbot_positioning/antenna_offset_x" value="$(env OM_ANTENNA_OFFSET_X)"/>
         <param name="xbot_positioning/antenna_offset_y" value="$(env OM_ANTENNA_OFFSET_Y)"/>
         <param name="xbot_positioning/debug" value="false"/>
+        <param name="xbot_positioning/imu_yaw_deadband" value="$(optenv OM_IMU_YAW_DEADBAND 0.0)"/>
 
         <!-- ntrip_client -->
         <param name="ntrip_client/host" value="$(env OM_NTRIP_HOSTNAME)"/>
@@ -146,6 +147,7 @@
         <param name="mower_logic/emergency_input_config" value="$(optenv OM_EMERGENCY_INPUT_CONFIG)"/>
         <param name="mower_logic/ignore_charging_current" value="$(optenv OM_IGNORE_CHARGING_CURRENT False)"/>
         <param name="mower_logic/shutdown_esc_max_pitch" value="$(optenv OM_SHUTDOWN_ESC_MAX_PITCH 0)"/>
+        <param name="mower_logic/max_obstacle_skips_per_segment" value="$(optenv OM_MAX_OBSTACLE_SKIPS_PER_SEGMENT 3)"/>
 
         <!-- xbot_monitoring -->
         <param name="xbot_monitoring/external_mqtt_enable" value="$(optenv OM_MQTT_ENABLE False)"/>
