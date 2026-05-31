@@ -25,6 +25,7 @@
 #include <sensor_msgs/Imu.h>
 #include <geometry_msgs/TwistStamped.h>
 #include <xbot_msgs/AbsolutePose.h>
+#include <mower_msgs/Status.h>
 #include <atomic>
 
 namespace ftc_local_planner
@@ -85,6 +86,13 @@ namespace ftc_local_planner
         double stall_gps_acc_{0.0};
         geometry_msgs::Point stall_last_position_;
 
+        // --- Rotor-load throttle (mowing only) ---
+        ros::Subscriber mower_status_sub_;
+        std::atomic<bool> mow_enabled_{false};
+        std::atomic<double> rotor_rpm_{0.0};
+        ros::Time mower_status_time_;
+        bool rotor_spinup_done_{false};
+
         // --- Obstacle-aware rotation direction (Phase 3) ---
         // +1 = prefer CCW, -1 = prefer CW, 0 = no preference (use natural/shorter direction)
         int preferred_pre_rotate_sign_{0};
@@ -107,6 +115,10 @@ namespace ftc_local_planner
         void onImu(const sensor_msgs::Imu::ConstPtr& msg);
         void onMeasuredTwist(const geometry_msgs::TwistStamped::ConstPtr& msg);
         void onXbPose(const xbot_msgs::AbsolutePose::ConstPtr& msg);
+        void onMowerStatus(const mower_msgs::Status::ConstPtr& msg);
+        // Rotor-load throttle helpers: active only while mowing with a fresh signal.
+        bool rotorThrottleActive();
+        double rotorThrottleFactor();
         void markObstacleAtCurrentPose();
 
         Eigen::Affine3d current_control_point;

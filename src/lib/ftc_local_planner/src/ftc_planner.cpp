@@ -58,6 +58,9 @@ namespace ftc_local_planner
                                            ros::TransportHints().tcpNoDelay(true));
         xb_pose_sub_ = nh.subscribe("/xbot_positioning/xb_pose", 10, &FTCPlanner::onXbPose, this,
                                     ros::TransportHints().tcpNoDelay(true));
+        // Mowing rotor RPM + blade-enabled feedback for the rotor-load throttle.
+        mower_status_sub_ = nh.subscribe("/ll/mower_status", 10, &FTCPlanner::onMowerStatus, this,
+                                         ros::TransportHints().tcpNoDelay(true));
 
         shock_flag_.store(false);
         slip_window_active_ = false;
@@ -91,6 +94,35 @@ namespace ftc_local_planner
         failure_detector_.setBufferLength(std::round(config.oscillation_recovery_min_duration * 10));
     }
 
+    void FTCPlanner::onMowerStatus(const mower_msgs::Status::ConstPtr& msg)
+    {
+        mow_enabled_.store(msg->mow_enabled);
+        rotor_rpm_.store(msg->mower_motor_rpm);
+        mower_status_time_ = ros::Time::now();
+    }
+
+    // Throttle is active only while actually mowing (blade enabled) with a fresh status
+    // signal — so transit/navigation paths (blade off) and stale-signal cases are unaffected.
+    bool FTCPlanner::rotorThrottleActive()
+    {
+        if (!config.rotor_throttle_enabled) return false;
+        if (!mow_enabled_.load()) return false;
+        if (mower_status_time_.isZero()) return false;
+        if ((ros::Time::now() - mower_status_time_).toSec() > config.rotor_signal_timeout) return false;
+        return true;
+    }
+
+    // 1.0 = full speed (rotor at/above threshold), scaling down to rotor_throttle_min_factor
+    // as the rotor bogs down under load.
+    double FTCPlanner::rotorThrottleFactor()
+    {
+        if (!rotorThrottleActive() || config.rotor_rpm_threshold <= 0.0) return 1.0;
+        double f = rotor_rpm_.load() / config.rotor_rpm_threshold;
+        if (f > 1.0) f = 1.0;
+        if (f < config.rotor_throttle_min_factor) f = config.rotor_throttle_min_factor;
+        return f;
+    }
+
     bool FTCPlanner::setPlan(const std::vector<geometry_msgs::PoseStamped> &plan)
     {
         current_state = PRE_ROTATE;
@@ -106,6 +138,7 @@ namespace ftc_local_planner
 
         slip_window_active_ = false;
         stall_window_active_ = false;
+        rotor_spinup_done_ = false;
 
         lat_error = 0.0;
         lon_error = 0.0;
@@ -668,6 +701,24 @@ namespace ftc_local_planner
             else
             {
                 speed = config.speed_slow;
+            }
+
+            // Rotor-load handling (mowing only; transit paths have the blade off so this is a no-op).
+            // First hold forward motion until the rotor spins up to threshold, then throttle forward
+            // speed proportionally if the rotor bogs down under load. The existing acceleration ramp
+            // below smooths the deceleration/recovery.
+            if (rotorThrottleActive())
+            {
+                if (!rotor_spinup_done_ && rotor_rpm_.load() < config.rotor_rpm_threshold &&
+                    time_in_current_state() < config.rotor_spinup_timeout)
+                {
+                    speed = 0.0;  // wait for the blade to reach threshold (timeout fail-safe)
+                }
+                else
+                {
+                    rotor_spinup_done_ = true;
+                    speed *= rotorThrottleFactor();
+                }
             }
 
             if (speed > current_movement_speed)

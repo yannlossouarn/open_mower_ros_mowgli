@@ -10,6 +10,9 @@
     <rosparam file="$(find open_mower)/params/ftc_local_planner.yaml" command="load" />
     <rosparam file="$(find open_mower)/params/docking_ftc_local_planner.yaml" command="load" />
     <rosparam file="$(find open_mower)/params/global_planner_params.yaml" command="load" />
+    <!-- Override the rotor-throttle threshold from the user config (GUI / mower_config.sh).
+         Loaded after the yaml so it wins; FTCPlanner reads it at startup. -->
+    <param name="FTCPlanner/rotor_rpm_threshold" value="$(optenv OM_MOW_RPM_THRESHOLD 2800)"/>
   </node>
 
   <node name="move_base_legacy_relay" pkg="mbf_costmap_nav" type="move_base_legacy_relay.py" respawn="true" respawn_delay="10">

@@ -17,6 +17,7 @@ find_package(catkin REQUIRED
 		sensor_msgs
 		std_msgs
 		xbot_msgs
+		mower_msgs
 		message_generation
         )
 
